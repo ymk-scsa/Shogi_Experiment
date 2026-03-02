@@ -1,0 +1,92 @@
+# === Python / OS ===
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+venv/
+env/
+.DS_Store
+Thumbs.db
+
+# === 学習済みモデル・重み (容量が大きいため除外) ===
+weights/
+
+# === ログ・統計データ ===
+# 将棋所やエンジンの対局ログ、TensorBoardのデータなど
+logs/
+runs/
+*.log
+record/*.csa
+record/*.kif
+debug/
+
+# === コンパイル・ビルド関連 ===
+# もし C++ で拡張を書いている場合
+build/
+dist/
+*.so
+*.egg-info/
+
+# === 将棋エンジン実行ファイル ===
+# コンパイル済みの実行ファイルなど
+*.exe
+
+# numpy / dataset
+*.npy
+*.npz
+
+# torch checkpoints anywhere
+*.ckpt
+
+# large binary safety
+*.bin
+
+# VSCode
+.vscode/
+
+# cache
+.cache/
+
+# 巨大なデータファイルを除外
+*.bin
+*.hcpe
+weights/
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Python
+*.py[cod]
+*$py.class
+
+# venv
+venv/
+.env/
+
+# DL系
+*.pt
+*.pth
+*.ckpt
+runs/
+logs/
+
+# dataset
+data/
+*.bin
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+
+*.hcpe
+*.psv
+*.pth
+weights/
+data/*.png
+__pycache__/
+bat/
