@@ -1,17 +1,33 @@
 ```
 GNN_Experience_20251229/
-├── model.py          # 先ほど作成したハイブリッドモデル
+├── bat/
+│   ├──GNN_engine.bat
+│   ├──run_modelA.bat
+│   ├──run_modelB.bat
+│   ├──run_modelC.bat
+│   └──run_modelD.bat
+├── data/
+│   ├──Suisho10Mn_psv.bin
+│   └──buffer.py     # 自己対局の棋譜を保存するリプレイバッファ
 ├── game/
 │   └── board.py      # 将棋のルール、駒の動き、合法手生成
+├── model/
+│   ├──model.py
+│   └──model_brock.py
 ├── search/
-│   └── search.py     # モンテカルロ木探索の実装
-├── agent/
-│   └── player.py     # MCTSとModelを組み合わせて指し手を決める
-├── data/
-│   └── buffer.py     # 自己対局の棋譜を保存するリプレイバッファ
-├── train.py          # 学習ループ（自己対局 → 学習 → モデル更新）
-├── weights/          # 学習済みモデルの保存先
-├── reqirements.txt         # 環境構築(venv)など
+│   └── mcts.py     # モンテカルロ木探索の実装
+├── setting/
+│   ├──diagnose_psv.py
+│   ├──Dockerfile
+│   └──requirements.txt
+├── train/
+│   └── train.py     # MCTSとModelを組み合わせて指し手を決める
+├── weights/
+│   ├──checkpoint-modelA-003.pth
+│   ├──checkpoint-modelB-003.pth
+│   ├──checkpoint-modelC-003.pth
+│   └──checkpoint-modelD-001.pth
+├── main.py          # 学習ループ（自己対局 → 学習 → モデル更新）
 └── README.md          # メモ
 ```
 
