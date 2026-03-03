@@ -62,7 +62,7 @@ import torch.nn.functional as F
 # プロジェクトルートを sys.path に追加
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from model import create_model
+from model.model import create_model
 from game.board import FEATURES_SETTINGS, FEATURES_NUM, MOVE_LABELS_NUM
 from data.buffer import HcpeDataLoader, PsvDataLoader
 
