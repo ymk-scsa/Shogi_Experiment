@@ -74,7 +74,6 @@ runs/
 logs/
 
 # dataset
-data/
 *.bin
 
 # Jupyter
@@ -87,6 +86,6 @@ data/
 *.psv
 *.pth
 weights/
-data/*.png
+
 __pycache__/
 bat/
