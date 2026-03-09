@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# 1. CNNブロック (Residual Block)
+# 1. CRE = Residual ブロック(ノーマルResnNet)
 # 盤面の局所的なパターン（3x3）を抽出する
 class ResBlock(nn.Module): #ResBlockという名前の新しいネットワークのクラスを定義
     def __init__(self, channels): #初期化メソッド、channelsは入力チャネル数

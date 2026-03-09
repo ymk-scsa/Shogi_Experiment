@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# 2. 自動グラフ構築型GNNブロック (Vision GNN Style)
-# 外部からの隣接行列を必要とせず、テンソルから動的にグラフを生成する
+# 1. GDS = DynamicGNNBlock (動的グラフ構築)
+# 自動グラフ構築型GNNブロック (Vision GNN Style)　外部からの隣接行列を必要とせず、テンソルから動的にグラフを生成する
 class DynamicGNNBlock(nn.Module): #動的グラフニューラルネットワーク（Dynamic GNN）という手法を用いたネットワーク層を定義
     def __init__(self, channels, k=9): #このブロックを初期化する関数。各マスが持つ情報の深さ（ベクトルサイズ）をchannelsで指定。kは各マスが接続する近傍ノード数
         super(DynamicGNNBlock, self).__init__() #PyTorchのベースクラス（nn.Module）を初期化し、このクラスをPyTorchのモジュールとして扱えるようにする
@@ -63,7 +63,7 @@ class DynamicGNNBlock(nn.Module): #動的グラフニューラルネットワー
         return F.relu(out + residual) # 最初の入力を足し合わせ（残差接続）、ReLUで活性化して出力する
     
 
-#4 'D' = Dynamic Graph GNN（EdgeConv系・shallow）ブロック
+#2. GDG = DynamicGraphBlock（EdgeConv系・shallow）
 # 動的にグラフを構築し、浅いネットワークで効果的に特徴を抽出するGNNブロック
 class DynamicGraphBlock(nn.Module): # 動的なグラフ構造を用いて盤面の特徴を抽出するブロック
     def __init__(self, channels, k=9): # 自分に関連の深い上位k個（9個）のマスを選択する設定
@@ -95,7 +95,7 @@ class DynamicGraphBlock(nn.Module): # 動的なグラフ構造を用いて盤面
         out = self.bn(out) # バッチ正規化を適用
         return F.relu(out + r) # 元の入力(r)を足し合わせ（スキップ接続）、ReLUで仕上げて出力
 
-#8 'N' = GCN（固定近傍グラフ）ブロック(DeepSets / Global Context Injection)
+#3. GCN = GCNBlock (DeepSets / Global Context Injection)
 # 事前定義された近傍グラフに基づいて情報を集約するGNNブロック
 class GCNBlock(nn.Module): # グラフ畳み込み（GCN）の概念を簡略化した軽量な情報共有ブロック
     def __init__(self, channels):
@@ -115,3 +115,171 @@ class GCNBlock(nn.Module): # グラフ畳み込み（GCN）の概念を簡略化
 
         out = tokens.permute(0,2,1).view(B,C,H,W) # 処理のために並べ替えていた軸を戻し、(B, C, 9, 9) の盤面形状に復元
         return F.relu(out + r) # 元の入力(r)を足し、ReLUで活性化して出力
+    
+#4. GSG = GraphSAGE ブロック
+# 近傍の情報を集約（今回はMean集約）し、自分自身の情報と結合して更新する
+class GraphSAGEBlock(nn.Module):
+    def __init__(self, channels, k=9):
+        super().__init__()
+        self.k = k
+        self.proj_neighbor = nn.Linear(channels, channels)
+        self.proj_self = nn.Linear(channels, channels)
+        self.combine = nn.Linear(channels * 2, channels)
+        self.bn = nn.BatchNorm2d(channels)
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        r = x
+        tokens = x.view(B, C, -1).permute(0, 2, 1) # (B, 81, C)
+
+        # 動的グラフ構築（距離ベースで近傍k個を選択）
+        dist = torch.cdist(tokens, tokens)
+        _, idx = torch.topk(dist, self.k, largest=False)
+        
+        batch = torch.arange(B, device=x.device).view(B, 1, 1)
+        neighbors = tokens[batch, idx] # (B, 81, k, C)
+
+        # 近傍の平均を集約
+        neighbor_mean = neighbors.mean(dim=2) # (B, 81, C)
+        
+        # 自分自身と結合 (SAGEの特徴)
+        combined = torch.cat([self.proj_self(tokens), self.proj_neighbor(neighbor_mean)], dim=-1)
+        out = self.combine(combined) # (B, 81, C)
+
+        out = out.permute(0, 2, 1).view(B, C, H, W)
+        return F.relu(self.bn(out) + r)
+
+#5. GIN = Graph Isomorphism Network ブロック
+# グラフの同型性判定において最強の理論的表現力を持つ構造
+class GINBlock(nn.Module):
+    def __init__(self, channels, k=9):
+        super().__init__()
+        self.k = k
+        self.eps = nn.Parameter(torch.zeros(1))
+        # GINの核：集約後に強力なMLPで変換する
+        self.mlp = nn.Sequential(
+            nn.Linear(channels, channels),
+            nn.ReLU(),
+            nn.Linear(channels, channels)
+        )
+        self.bn = nn.BatchNorm2d(channels)
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        r = x
+        tokens = x.view(B, C, -1).permute(0, 2, 1)
+
+        dist = torch.cdist(tokens, tokens)
+        _, idx = torch.topk(dist, self.k, largest=False)
+        
+        batch = torch.arange(B, device=x.device).view(B, 1, 1)
+        neighbors = tokens[batch, idx]
+
+        # GINの公式: (1 + eps) * self + sum(neighbors)
+        neighbor_sum = neighbors.sum(dim=2)
+        out = self.mlp((1 + self.eps) * tokens + neighbor_sum)
+
+        out = out.permute(0, 2, 1).view(B, C, H, W)
+        return F.relu(self.bn(out) + r)
+
+#6. G2I = GCNII ブロック
+# 深い層でも「初期状態の残差(Initial Residual)」を混ぜることで過平滑化を防ぐ
+class GCNIIBlock(nn.Module):
+    def __init__(self, channels, alpha=0.1, theta=0.5, layer_idx=1, k=9):
+        super().__init__()
+        self.alpha = alpha
+        self.beta = theta / layer_idx # 深くなるほど調整を小さくする
+        self.k = k
+        self.weight = nn.Linear(channels, channels)
+        self.bn = nn.BatchNorm2d(channels)
+
+    def forward(self, x, x_0=None):
+        # x_0 はネットワークの最初の層の出力（入力チャンネルから変換直後のもの）
+        if x_0 is None: x_0 = x
+        
+        B, C, H, W = x.shape
+        r = x
+        tokens = x.view(B, C, -1).permute(0, 2, 1)
+        tokens_0 = x_0.view(B, C, -1).permute(0, 2, 1)
+
+        dist = torch.cdist(tokens, tokens)
+        _, idx = torch.topk(dist, self.k, largest=False)
+        
+        batch = torch.arange(B, device=x.device).view(B, 1, 1)
+        neighbor_mean = tokens[batch, idx].mean(dim=2)
+
+        # Initial Residual (alpha) と Identity Mapping (beta)
+        h = (1 - self.alpha) * neighbor_mean + self.alpha * tokens_0
+        out = (1 - self.beta) * h + self.beta * self.weight(h)
+
+        out = out.permute(0, 2, 1).view(B, C, H, W)
+        return F.relu(self.bn(out) + r)
+
+#7. SGC = Simple Graph Convolution ブロック
+# 活性化関数を介さず、近傍情報の平滑化のみを高速に行う
+class SGCBlock(nn.Module):
+    def __init__(self, channels, k=9):
+        super().__init__()
+        self.k = k
+        self.linear = nn.Linear(channels, channels)
+        self.bn = nn.BatchNorm2d(channels)
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        r = x
+        tokens = x.view(B, C, -1).permute(0, 2, 1)
+
+        dist = torch.cdist(tokens, tokens)
+        _, idx = torch.topk(dist, self.k, largest=False)
+        
+        batch = torch.arange(B, device=x.device).view(B, 1, 1)
+        # SGCは単なる情報の拡散（平均化）に特化
+        out = tokens[batch, idx].mean(dim=2)
+        out = self.linear(out)
+
+        out = out.permute(0, 2, 1).view(B, C, H, W)
+        return F.relu(self.bn(out) + r)
+
+#8. GA2 = GATv2 ブロック
+# 従来のアテンションよりも「動的な注目」が可能な改良版GAT
+class GATv2Block(nn.Module):
+    def __init__(self, channels, heads=4, k=9):
+        super().__init__()
+        self.k = k
+        self.heads = heads
+        d_k = channels // heads
+        
+        self.w_q = nn.Linear(channels, channels)
+        self.w_k = nn.Linear(channels, channels)
+        self.w_v = nn.Linear(channels, channels)
+        # GATv2: QueryとKeyを足してから非線形変換し、Attentionスコアを出す
+        self.a = nn.Parameter(torch.randn(heads, d_k))
+        self.bn = nn.BatchNorm2d(channels)
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        r = x
+        tokens = x.view(B, C, -1).permute(0, 2, 1) # (B, 81, C)
+
+        dist = torch.cdist(tokens, tokens)
+        _, idx = torch.topk(dist, self.k, largest=False)
+        
+        batch = torch.arange(B, device=x.device).view(B, 1, 1)
+        neighbor_feats = tokens[batch, idx] # (B, 81, k, C)
+        
+        # アテンションスコア計算
+        q = self.w_q(tokens).unsqueeze(2) # (B, 81, 1, C)
+        k = self.w_k(neighbor_feats)      # (B, 81, k, C)
+        
+        # GATv2の特徴: スコア = a * leaky_relu(Wq + Wk)
+        combined = F.leaky_relu(q + k, 0.2)
+        # (B, 81, k, heads, d_k) に変形してアテンション
+        combined = combined.view(B, 81, self.k, self.heads, -1)
+        scores = (combined * self.a).sum(dim=-1) # (B, 81, k, heads)
+        attn = F.softmax(scores, dim=2).unsqueeze(-1) # (B, 81, k, heads, 1)
+        
+        v = self.w_v(neighbor_feats).view(B, 81, self.k, self.heads, -1)
+        out = (attn * v).sum(dim=2).reshape(B, 81, C)
+
+        out = out.permute(0, 2, 1).view(B, C, H, W)
+        return F.relu(self.bn(out) + r)
