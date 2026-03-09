@@ -1,18 +1,8 @@
-"""
-GNNとCNNのハイブリッドモデルのベース
-グラフ定義によってGNNの制度が大幅に変化したため、
-テンソル情報から自動でグラフデータを学習するVisionGNNを用いている。
-計算量、推論速度に大幅に問題がある。
-ここから派生モデルを複数作成
-
-アイデア 'L' = Light Graph Convolutional Network (LightGCN) ブロック
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 # model_block.pyからすべてのブロックをインポート
-from .model_block import ResBlock, DynamicGNNBlock, RTGNNBlock, DynamicGraphBlock, GATBlock, SetBlock, SlotBlock, GCNBlock
+from .gnn_block import ResBlock, DynamicGNNBlock, RTGNNBlock, DynamicGraphBlock, GATBlock, SetBlock, SlotBlock, GCNBlock
 
 class HybridAlphaZeroNet(nn.Module):
     def __init__(self, input_channels, num_actions, blocks_config):
