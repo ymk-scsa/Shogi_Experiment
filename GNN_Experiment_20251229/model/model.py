@@ -2,7 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 # model_block.pyからすべてのブロックをインポート
+from .gnn_block import ResBlock
 from .gnn_block import ResBlock, DynamicGNNBlock, RTGNNBlock, DynamicGraphBlock, GATBlock, SetBlock, SlotBlock, GCNBlock
+from .transformer_block import RTGNNBlock
+from .others_block import SetBlock
 
 class HybridAlphaZeroNet(nn.Module):
     def __init__(self, input_channels, num_actions, blocks_config):

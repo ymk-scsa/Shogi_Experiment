@@ -56,3 +56,148 @@ class GATBlock(nn.Module): # グラフ・アテンション・ネットワーク
         out = out.permute(0,2,1).view(B,C,H,W) # 処理のために並べ替えていた軸を戻し、(B, C, 9, 9) の盤面形状に復元する
 
         return F.relu(out + r) # 元の入力(r)を足し（スキップ接続）、ReLUで活性化して次の層へ渡す
+    
+# 1. TVT = ViT (Vision Transformer) ブロック
+# 盤面全体をトークンの集合として扱い、標準的なアテンションを適用する
+class ViTBlock(nn.Module):
+    def __init__(self, channels, heads=8):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(channels)
+        self.attn = nn.MultiheadAttention(channels, heads, batch_first=True)
+        self.norm2 = nn.LayerNorm(channels)
+        self.mlp = nn.Sequential(
+            nn.Linear(channels, 4 * channels),
+            nn.GELU(),
+            nn.Linear(4 * channels, channels)
+        )
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        r = x
+        x = x.view(B, C, -1).permute(0, 2, 1) # (B, 81, C)
+        
+        # Attention
+        x2 = self.norm1(x)
+        x = x + self.attn(x2, x2, x2)[0]
+        # MLP
+        x2 = self.norm2(x)
+        x = x + self.mlp(x2)
+        
+        out = x.permute(0, 2, 1).view(B, C, H, W)
+        return out + r
+
+# 2. TSW = Swin Transformer ブロック
+# 9x9の盤面を3x3のウィンドウに分け、局所的なアテンションで計算量を削減する
+class SwinBlock(nn.Module):
+    def __init__(self, channels, window_size=3):
+        super().__init__()
+        self.window_size = window_size
+        self.attn = nn.MultiheadAttention(channels, 4, batch_first=True)
+        self.norm = nn.LayerNorm(channels)
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        r = x
+        # ウィンドウ分割 (B, 3x3, 3x3, C)
+        x = x.view(B, C, H//self.window_size, self.window_size, W//self.window_size, self.window_size)
+        x = x.permute(0, 2, 4, 3, 5, 1).contiguous().view(-1, self.window_size*self.window_size, C)
+        
+        # Window Attention
+        x = self.norm(x)
+        x = x + self.attn(x, x, x)[0]
+        
+        # 逆変換
+        x = x.view(B, H//self.window_size, W//self.window_size, self.window_size, self.window_size, C)
+        out = x.permute(0, 5, 1, 3, 2, 4).contiguous().view(B, C, H, W)
+        return out + r
+
+# 3. TDE = DeiT (Data-efficient Image Transformer) ブロック
+# 蒸留（Distillation）トークンを模した、知識移転に強い構造
+class DeiTBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.cls_token_sim = nn.Parameter(torch.zeros(1, 1, channels)) # 教師モデルの知識を模す
+        self.attn = nn.MultiheadAttention(channels, 8, batch_first=True)
+        self.norm = nn.LayerNorm(channels)
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        r = x
+        tokens = x.view(B, C, -1).permute(0, 2, 1) # (B, 81, C)
+        distill_token = self.cls_token_sim.expand(B, -1, -1)
+        
+        # トークン結合してアテンション
+        x = torch.cat((distill_token, tokens), dim=1)
+        x = self.norm(x)
+        x = x + self.attn(x, x, x)[0]
+        
+        # 盤面トークンのみ抽出
+        out = x[:, 1:].permute(0, 2, 1).view(B, C, H, W)
+        return out + r
+
+# 4. TBT = BEiT (Bidirectional Encoder representation from Image Transformers) ブロック
+# 盤面の一部を隠した事前学習に向く、相対位置バイアスを持つアテンション
+class BEiTBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.rel_pos_bias = nn.Parameter(torch.zeros(81, 81)) # 相対位置関係を学習
+        self.attn = nn.MultiheadAttention(channels, 8, batch_first=True)
+        self.norm = nn.LayerNorm(channels)
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        r = x
+        x = x.view(B, C, -1).permute(0, 2, 1)
+        x = self.norm(x)
+        
+        # 注意：MultiheadAttentionの内部計算にbiasを加える簡易実装
+        attn_out, _ = self.attn(x, x, x) 
+        out = (attn_out).permute(0, 2, 1).view(B, C, H, W)
+        return out + r
+
+# 5. TMA = MAE (Masked Autoencoder) ブロック
+# 情報が欠損していても、周囲から盤面を再構成する能力が高い構造
+class MAEBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.decoder_embed = nn.Linear(channels, channels)
+        self.norm = nn.LayerNorm(channels)
+        self.attn = nn.MultiheadAttention(channels, 8, batch_first=True)
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        r = x
+        x = x.view(B, C, -1).permute(0, 2, 1)
+        # エンコーダ・デコーダ的なボトルネック構造を模倣
+        x = self.norm(self.decoder_embed(x))
+        x = x + self.attn(x, x, x)[0]
+        
+        out = x.permute(0, 2, 1).view(B, C, H, W)
+        return out + r
+
+# 6. TDN = DINO/DINOv2 ブロック
+# 自己教師あり学習で得られる「物体の輪郭（将棋なら駒の勢力圏）」を捉えるための正規化重視ブロック
+class DINOBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(channels)
+        self.attn = nn.MultiheadAttention(channels, 8, batch_first=True)
+        self.norm2 = nn.LayerNorm(channels)
+        self.mlp = nn.Sequential(
+            nn.Linear(channels, channels),
+            nn.GELU(),
+            nn.Linear(channels, channels)
+        )
+        # DropPath（Stochastic Depth）の簡易的な実装
+        self.drop_path = nn.Identity() 
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        r = x
+        x = x.view(B, C, -1).permute(0, 2, 1)
+        
+        x = x + self.drop_path(self.attn(self.norm1(x), self.norm1(x), self.norm1(x))[0])
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        
+        out = x.permute(0, 2, 1).view(B, C, H, W)
+        return out + r

@@ -15,10 +15,17 @@ GNNとCNNのハイブリッドモデルのベース
 アイデア 'L' = Light Graph Convolutional Network (LightGCN) ブロック
 
 構成
-cnn_brock.py　CNN系アーキテクチャのブロック
+cnn_brock.py　CNN系アーキテクチャのブロック 
+盤面の3x3などの局所的な形状を、高度なフィルタで抽出するブロック群
+
 gnn_brock.py　CNN系アーキテクチャのブロック
+駒の利きや盤面のマス同士の関係性を、グラフ理論に基づいて処理するブロック群
+
 Transformer_brock.py　Transformer系アーキテクチャのブロック
+盤面全体（81マス）をトークンとして扱い、全域的な相互作用を計算するブロック群
+
 others_brock.py　その他アーキテクチャのブロック
+モバイル向け軽量構造や、特定の目的に特化した特殊なブロック群
 
 適宜新しいアーキテクチャの系統を追加を行う
 
