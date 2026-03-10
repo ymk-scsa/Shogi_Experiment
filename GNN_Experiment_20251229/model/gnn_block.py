@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# 1. GDS = DynamicGNNBlock (動的グラフ構築)
+#1. GDS = DynamicGNNBlock (動的グラフ構築)
 # 自動グラフ構築型GNNブロック (Vision GNN Style)　外部からの隣接行列を必要とせず、テンソルから動的にグラフを生成する
 class DynamicGNNBlock(nn.Module): #動的グラフニューラルネットワーク（Dynamic GNN）という手法を用いたネットワーク層を定義
     def __init__(self, channels, k=9): #このブロックを初期化する関数。各マスが持つ情報の深さ（ベクトルサイズ）をchannelsで指定。kは各マスが接続する近傍ノード数
@@ -215,7 +215,7 @@ class GCNIIBlock(nn.Module):
         out = out.permute(0, 2, 1).view(B, C, H, W)
         return F.relu(self.bn(out) + r)
 
-#7. SGC = Simple Graph Convolution ブロック
+#7. GSG = Simple Graph Convolution ブロック
 # 活性化関数を介さず、近傍情報の平滑化のみを高速に行う
 class SGCBlock(nn.Module):
     def __init__(self, channels, k=9):

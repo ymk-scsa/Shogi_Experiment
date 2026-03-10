@@ -2,10 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 # model_block.pyからすべてのブロックをインポート
-from .gnn_block import ResBlock
-from .gnn_block import ResBlock, DynamicGNNBlock, RTGNNBlock, DynamicGraphBlock, GATBlock, SetBlock, SlotBlock, GCNBlock
-from .transformer_block import RTGNNBlock
-from .others_block import SetBlock
+from .cnn_block import ResBlock, DenseBlock, ResNeXtBlock, ConvNeXtBlock, XceptionBlock, InceptionBlock, InceptionV3Block, InceptionV4Block, InceptionResNetBlock
+from .gnn_block import DynamicGNNBlock, DynamicGraphBlock, GCNBlock, GraphSAGEBlock, GINBlock, GCNIIBlock, SGCBlock, GATv2Block
+from .transformer_block import RTGNNBlock, GATBlock, ViTBlock, SwinBlock, DeiTBlock, BEiTBlock, MAEBlock, DINOBlock
+from .others_block import SetBlock, SlotBlock, MobileNetV1Block, MobileNetV2Block, MobileNetV3Block, ShuffleNetV1Block, ShuffleNetV2Block, SqueezeNetBlock, MNasNetBlock, EfficientNetBlock, CapsuleBlock, MLPMixerBlock, SqueezeExcitationBlock, UNetBlock
 
 class HybridAlphaZeroNet(nn.Module):
     def __init__(self, input_channels, num_actions, blocks_config):
@@ -23,14 +23,45 @@ class HybridAlphaZeroNet(nn.Module):
 
         # ブロック生成用のマップ
         self.block_map = {
-            'C': lambda: ResBlock(256),
-            'G': lambda: DynamicGNNBlock(256),
-            'T': lambda: RTGNNBlock(256),
-            'D': lambda: DynamicGraphBlock(256),
-            'A': lambda: GATBlock(256),
-            'S': lambda: SetBlock(256),
-            'O': lambda: SlotBlock(256),
-            'N': lambda: GCNBlock(256),
+            'CRE': lambda: ResBlock(256),
+            'CDN': lambda: DenseBlock(256),
+            'CNX': lambda: ResNeXtBlock(256),
+            'CNT': lambda: ConvNeXtBlock(256),
+            'CXC': lambda: XceptionBlock(256),
+            'CGL': lambda: InceptionBlock(256),
+            'CI3': lambda: InceptionV3Block(256),
+            'CI4': lambda: InceptionV4Block(256),
+            'CIR': lambda: InceptionResNetBlock(256),
+            'GDS': lambda: DynamicGNNBlock(256),
+            'GDG': lambda: DynamicGraphBlock(256),
+            'GCN': lambda: GCNBlock(256),
+            'GSG': lambda: GraphSAGEBlock(256),
+            'GIN': lambda: GINBlock(256),
+            'G2I': lambda: GCNIIBlock(256),
+            'GSG': lambda: SGCBlock(256),
+            'GA2': lambda: GATv2Block(256),
+            'TRT': lambda: RTGNNBlock(256),
+            'TGA': lambda: GATBlock(256),
+            'TVT': lambda: ViTBlock(256),
+            'TSW': lambda: SwinBlock(256),
+            'TDE': lambda: DeiTBlock(256),
+            'TBT': lambda: BEiTBlock(256),
+            'TMA': lambda: MAEBlock(256),
+            'TDN': lambda: DINOBlock(256),
+            'OST': lambda: SetBlock(256),
+            'OSB': lambda: SlotBlock(256),
+            'OM1': lambda: MobileNetV1Block(256),
+            'OM2': lambda: MobileNetV2Block(256),
+            'OM3': lambda: MobileNetV3Block(256),
+            'OS1': lambda: ShuffleNetV1Block(256),
+            'OS2': lambda: ShuffleNetV2Block(256),
+            'OSQ': lambda: SqueezeNetBlock(256),
+            'OMN': lambda: MNasNetBlock(256),
+            'OEF': lambda: EfficientNetBlock(256),
+            'OCB': lambda: CapsuleBlock(256),
+            'OMM': lambda: MLPMixerBlock(256),
+            'OSE': lambda: SqueezeExcitationBlock(256),
+            'OUN': lambda: UNetBlock(256),
         }
 
         # 設定リストに基づいてバックボーン（背骨）を構築

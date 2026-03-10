@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# 1. CRE = Residual ブロック(ノーマルResnNet)
+# 1. CRE = Residual ブロック(ノーマルResNet)
 # 盤面の局所的なパターン（3x3）を抽出する
 class ResBlock(nn.Module): #ResBlockという名前の新しいネットワークのクラスを定義
     def __init__(self, channels): #初期化メソッド、channelsは入力チャネル数
@@ -49,7 +49,7 @@ class ResNeXtBlock(nn.Module):
         out = self.bn2(self.conv2(out))
         return F.relu(out + r)
 
-# 4. NXT = ConvNeXt ブロック
+# 4. CNT = ConvNeXt ブロック
 class ConvNeXtBlock(nn.Module):
     def __init__(self, channels):
         super().__init__()
