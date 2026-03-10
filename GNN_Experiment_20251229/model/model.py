@@ -38,7 +38,7 @@ class HybridAlphaZeroNet(nn.Module):
             'GSG': lambda: GraphSAGEBlock(256),
             'GIN': lambda: GINBlock(256),
             'G2I': lambda: GCNIIBlock(256),
-            'GSG': lambda: SGCBlock(256),
+            'GSC': lambda: SGCBlock(256),
             'GA2': lambda: GATv2Block(256),
             'TRT': lambda: RTGNNBlock(256),
             'TGA': lambda: GATBlock(256),
@@ -87,16 +87,51 @@ class HybridAlphaZeroNet(nn.Module):
             nn.Linear(256, 1),
             nn.Tanh()
         )
+        
+        # --- 補助タスクヘッド ---
+        # 1. King Safety (自玉・敵玉の安全度: Scalar 2)
+        self.head_king_safety = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(256, 2)
+        )
+        # 2. Material (駒得: Scalar 1)
+        self.head_material = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(256, 1)
+        )
+        # 3. Mobility (指し手の選択肢の多さ: Scalar 1)
+        self.head_mobility = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(256, 1)
+        )
+        # 4. Attack / Threat / Damage (各マスの危険度など: Map 9x9)
+        self.head_board_stats = nn.Sequential(
+            nn.Conv2d(256, 3, kernel_size=1), # 3チャネルで各ステータスを表現
+            nn.Sigmoid()
+        )
 
-    def forward(self, x):
+    def forward(self, x, return_aux=True):
         h = self.conv_input(x)
         for block in self.backbone:
             h = block(h)
         
         policy = self.policy_head(h)
         value = self.value_head(h)
-        return F.log_softmax(policy, dim=1), value
 
+        if not self.training and not return_aux:
+            return F.log_softmax(policy, dim=1), value
+
+        # 補助タスクの計算
+        aux = {
+            'king_safety': self.head_king_safety(h),
+            'material': self.head_material(h),
+            'mobility': self.head_mobility(h),
+            'board_stats': self.head_board_stats(h) # attack, threat, damage
+        }
+        return F.log_softmax(policy, dim=1), value, aux
 # ---------------------------------------------------------
 # 実験設定の定義用ヘルパー
 # ---------------------------------------------------------
