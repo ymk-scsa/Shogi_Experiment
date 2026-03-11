@@ -10,7 +10,7 @@ from .others_block import SetBlock, SlotBlock, MobileNetV1Block, MobileNetV2Bloc
 class HybridAlphaZeroNet(nn.Module):
     def __init__(self, input_channels, num_actions, blocks_config):
         """
-        blocks_config: ['C', 'G', 'C', 'G', ...] といったリスト形式の構成
+        blocks_config: ['CRE', 'GDS', 'CNX', 'GDG', ...] といったリスト形式の構成
         """
         super(HybridAlphaZeroNet, self).__init__()
 
@@ -19,6 +19,15 @@ class HybridAlphaZeroNet(nn.Module):
             nn.Conv2d(input_channels, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU()
+        )
+        
+        # --------------------------------
+        # Board Tokenization
+        # --------------------------------
+        self.board_tokenizer = nn.Conv2d(
+            256,
+            256,
+            kernel_size=1
         )
 
         # ブロック生成用のマップ
@@ -88,6 +97,15 @@ class HybridAlphaZeroNet(nn.Module):
             nn.Tanh()
         )
         
+        # --------------------------------
+        # Policy Entropy Head
+        # --------------------------------
+        self.head_policy_entropy = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(256, 1)
+        )
+        
         # --- 補助タスクヘッド ---
         # 1. King Safety (自玉・敵玉の安全度: Scalar 2)
         self.head_king_safety = nn.Sequential(
@@ -107,14 +125,69 @@ class HybridAlphaZeroNet(nn.Module):
             nn.Flatten(),
             nn.Linear(256, 1)
         )
-        # 4. Attack / Threat / Damage (各マスの危険度など: Map 9x9)
-        self.head_board_stats = nn.Sequential(
-            nn.Conv2d(256, 3, kernel_size=1), # 3チャネルで各ステータスを表現
+        
+        # Attack Map
+        self.head_attack = nn.Sequential(
+            nn.Conv2d(256, 1, kernel_size=1),
             nn.Sigmoid()
         )
 
+        # Threat Map
+        self.head_threat = nn.Sequential(
+            nn.Conv2d(256, 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+
+        # Damage Map
+        self.head_damage = nn.Sequential(
+            nn.Conv2d(256, 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+        
+        # -----------------------------
+        # Self-Supervised heads
+        # -----------------------------
+        self.num_piece_types = 31 # 盤上の駒の種類数（例: 歩、香、桂、銀、金、角、飛、王など）×先手・後手と空マス
+        
+        self.head_masked_board = nn.Conv2d(
+            256,
+            self.num_piece_types,
+            kernel_size=1
+        )
+        
+        self.head_attack_map_ssl = nn.Sequential(
+            nn.Conv2d(256, 8, kernel_size=1),
+            nn.Sigmoid()
+        )
+        
+        self.head_move_feature = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(256, 128)
+        )
+        
+        self.head_future = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(256, 256)
+        )
+        
+        self.head_search = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(256, 256)
+        )
+        
+
     def forward(self, x, return_aux=True):
         h = self.conv_input(x)
+        
+        # -------------------------
+        # Board Tokenization
+        # -------------------------
+        tokens = self.board_tokenizer(h)
+        tokens = tokens.flatten(2).transpose(1, 2)  # B,81,256
+
         for block in self.backbone:
             h = block(h)
         
@@ -129,9 +202,20 @@ class HybridAlphaZeroNet(nn.Module):
             'king_safety': self.head_king_safety(h),
             'material': self.head_material(h),
             'mobility': self.head_mobility(h),
-            'board_stats': self.head_board_stats(h) # attack, threat, damage
+
+            'attack': self.head_attack(h),
+            'threat': self.head_threat(h),
+            'damage': self.head_damage(h),
+
+            'masked_board': self.head_masked_board(h),
+            'attack_map_ssl': self.head_attack_map_ssl(h),
+            'move_feature': self.head_move_feature(h),
+            'future_rep': self.head_future(h),
+            'search_rep': self.head_search(h),
+            
+            'policy_entropy': self.head_policy_entropy(h),
         }
-        return F.log_softmax(policy, dim=1), value, aux
+        return policy, value, aux
 # ---------------------------------------------------------
 # 実験設定の定義用ヘルパー
 # ---------------------------------------------------------
@@ -141,23 +225,23 @@ def create_model(input_channels, num_actions, mode="30blocks"):
     """
     if mode == "modelA":
         # モデルA: CNN 10ブロック
-        config = ['C'] * 10
+        config = ['CRE'] * 10
 
     elif mode == "modelB":
         # モデルB: CNN 5ブロック + GCN 5ブロック (計10)
-        config = ['C'] * 5 + ['N'] * 5
+        config = ['CRE'] * 5 + ['GSC'] * 5
 
     elif mode == "modelC":
         # モデルC: CNN 30ブロック
-        config = ['C'] * 30
+        config = ['CRE'] * 30
 
     elif mode == "modelD" or mode == "30blocks":
         # モデルD: (CNN 5 + GCN 5) を 3回繰り返す (計30)
-        config = (['C'] * 5 + ['N'] * 5) * 3
+        config = (['CRE'] * 5 + ['GSC'] * 5) * 3
 
     else:
         # デフォルト設定（どれにも当てはまらない場合）
-        config = ['C'] * 10
+        config = ['CRE'] * 10
         print(f"Unknown mode: {mode}. Using default CNN 10 blocks.")
         
     return HybridAlphaZeroNet(input_channels, num_actions, config)
