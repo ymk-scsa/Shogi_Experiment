@@ -2,28 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class SqueezeExcitation(nn.Module):
-    """
-    MobileNetV3Block・EfficientNetBlock 内部で使うヘルパークラス。
-    チャンネルをいったん圧縮（Squeeze）してから
-    各チャンネルの重要度を学習し、元に戻す（Excitation）。
-    """
-    def __init__(self, channels, reduction=16):
-        super().__init__()
-        self.pool = nn.AdaptiveAvgPool2d(1)          # 9×9 → 1×1 に平均圧縮
-        self.fc = nn.Sequential(
-            nn.Linear(channels, channels // reduction),  # 256 → 16
-            nn.ReLU(),
-            nn.Linear(channels // reduction, channels),  # 16 → 256
-            nn.Sigmoid()                                  # 0〜1 の重みに変換
-        )
-
-    def forward(self, x):
-        B, C = x.shape[:2]
-        w = self.pool(x).view(B, C)          # (B, C)
-        w = self.fc(w).view(B, C, 1, 1)      # (B, C, 1, 1)
-        return x * w                          # チャンネルごとに重みを掛ける
-
 #1. OST = SetBlock (Set Transformer / Deep Sets ブロック# 元の入力(r)を足し（スキップ接続）、ReLUで活性化して次の層へ渡す)
 # 集合データを扱うためのTransformerベースのブロック
 class SetBlock(nn.Module): # 盤面全体の「集合的（Set）」な情報を抽出し、各マスに共有するブロック

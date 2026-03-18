@@ -4,7 +4,7 @@ import torch.nn.functional as F
 # model_block.pyからすべてのブロックをインポート
 from .cnn_block import ResBlock, DenseBlock, ResNeXtBlock, ConvNeXtBlock, XceptionBlock, InceptionBlock, InceptionV3Block, InceptionV4Block, InceptionResNetBlock
 from .gnn_block import DynamicGNNBlock, DynamicGraphBlock, GCNBlock, GraphSAGEBlock, GINBlock, GCNIIBlock, SGCBlock, GATv2Block
-from .transformer_block import RTGNNBlock, GATBlock, ViTBlock, SwinBlock, DeiTBlock, BEiTBlock, MAEBlock, DINOBlock, LocalAttentionBlock
+from .transformer_block import RTGNNBlock, GATBlock, ViTBlock, SwinBlock, DeiTBlock, BEiTBlock, MAEBlock, DINOBlock
 from .others_block import SetBlock, SlotBlock, MobileNetV1Block, MobileNetV2Block, MobileNetV3Block, ShuffleNetV1Block, ShuffleNetV2Block, SqueezeNetBlock, MNasNetBlock, EfficientNetBlock, CapsuleBlock, MLPMixerBlock, SqueezeExcitationBlock, UNetBlock
 
 class HybridAlphaZeroNet(nn.Module):
@@ -19,6 +19,15 @@ class HybridAlphaZeroNet(nn.Module):
             nn.Conv2d(input_channels, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU()
+        )
+        
+        # --------------------------------
+        # Board Tokenization
+        # --------------------------------
+        self.board_tokenizer = nn.Conv2d(
+            256,
+            256,
+            kernel_size=1
         )
 
         # ブロック生成用のマップ
@@ -48,7 +57,6 @@ class HybridAlphaZeroNet(nn.Module):
             'TBT': lambda: BEiTBlock(256),
             'TMA': lambda: MAEBlock(256),
             'TDN': lambda: DINOBlock(256),
-            'TLA': lambda: LocalAttentionBlock(256),
             'OST': lambda: SetBlock(256),
             'OSB': lambda: SlotBlock(256),
             'OM1': lambda: MobileNetV1Block(256),
@@ -66,14 +74,7 @@ class HybridAlphaZeroNet(nn.Module):
         }
 
         # 設定リストに基づいてバックボーン（背骨）を構築
-        self.backbone = nn.ModuleList()
-        gcnii_count = 0
-        for b in blocks_config:
-            if b == 'G2I':
-                gcnii_count += 1
-                self.backbone.append(GCNIIBlock(256, layer_idx=gcnii_count))
-            else:
-                self.backbone.append(self.block_map[b]())
+        self.backbone = nn.ModuleList([self.block_map[b]() for b in blocks_config])
 
         # Policy Head: 次の指し手の確率
         self.policy_head = nn.Sequential(
@@ -180,6 +181,12 @@ class HybridAlphaZeroNet(nn.Module):
 
     def forward(self, x, return_aux=True):
         h = self.conv_input(x)
+        
+        # -------------------------
+        # Board Tokenization
+        # -------------------------
+        tokens = self.board_tokenizer(h)
+        tokens = tokens.flatten(2).transpose(1, 2)  # B,81,256
 
         for block in self.backbone:
             h = block(h)
