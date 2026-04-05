@@ -19,7 +19,7 @@ except ImportError as e:
 
 # プロジェクトルートを追加
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from data.buffer import PsvDataLoader
+from Shogi_Experience.GNN_Experiment_20251229.data.past_buffer import PsvDataLoader
 
 def diagnose(file_path):
     if not os.path.exists(file_path):

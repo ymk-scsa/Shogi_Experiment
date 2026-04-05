@@ -52,7 +52,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from model.model import HybridAlphaZeroNet, create_model
-from data.buffer import PrioritizedReplayBuffer, Experience, collate_experiences
+from Shogi_Experience.GNN_Experiment_20251229.data.past_buffer import PrioritizedReplayBuffer, Experience, collate_experiences
 
 # ---------------------------------------------------------------------------
 # ロガー設定
