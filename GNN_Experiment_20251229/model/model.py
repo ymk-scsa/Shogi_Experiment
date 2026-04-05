@@ -218,19 +218,35 @@ def create_model(input_channels, num_actions, mode="30blocks"):
     """
     if mode == "modelA":
         # モデルA: CNN 10ブロック
-        config = ['CRE'] * 10
+        config = ['CNX'] * 15 + ['CNT'] * 15
 
     elif mode == "modelB":
         # モデルB: CNN 5ブロック + GCN 5ブロック (計10)
-        config = ['CRE'] * 5 + ['GSC'] * 5
+        config = ['CRE'] * 20 + ['SWN'] * 10
 
     elif mode == "modelC":
         # モデルC: CNN 30ブロック
-        config = ['CRE'] * 30
+        config = ['CRE'] * 5 + ['CDN'] * 5 + ['CNX'] * 5 + ['CNT'] * 5 + ['CGL'] * 5 + ['CI3'] * 5
 
     elif mode == "modelD" or mode == "30blocks":
         # モデルD: (CNN 5 + GCN 5) を 3回繰り返す (計30)
+        config = ['MV3'] * 15 + ['SV2'] * 15
+    
+    elif mode == "modelE" or mode == "30blocks":
+        # モデルE: (CNN 5 + GCN 5) を 3回繰り返す (計30)
+        config = ['CI4'] * 30
+        
+    elif mode == "modelF" or mode == "30blocks":
+        # モデルF: (CNN 5 + GCN 5) を 3回繰り返す (計30)
         config = (['CRE'] * 5 + ['GSC'] * 5) * 3
+        
+    elif mode == "modelG" or mode == "30blocks":
+        # モデルG: (CNN 5 + GCN 5) を 3回繰り返す (計30)
+        config = ['CRE'] * 10 + ['GSC'] * 10 + ['GIN'] * 10
+        
+    elif mode == "modelH" or mode == "30blocks":
+        # モデルH: (CNN 5 + GCN 5) を 3回繰り返す (計30)
+        config = (['CRE'] * 3 + ['GSC'] * 2 + ['TLA'] * 1) * 5
 
     else:
         # デフォルト設定（どれにも当てはまらない場合）

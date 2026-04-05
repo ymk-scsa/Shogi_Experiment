@@ -13,6 +13,10 @@ GNN_Experience_20251229/
 │   └── board.py      # 将棋のルール、駒の動き、合法手生成
 ├── model/
 │   ├──model.py
+│   ├──cnn_brock.py
+│   ├──gnn_brock.py
+│   ├──transformer_brock.py
+│   ├──model_README.md
 │   └──model_brock.py
 ├── search/
 │   └── mcts.py     # モンテカルロ木探索の実装
@@ -21,13 +25,15 @@ GNN_Experience_20251229/
 │   ├──Dockerfile
 │   └──requirements.txt
 ├── train/
-│   └── train.py     # MCTSとModelを組み合わせて指し手を決める
+│   ├──immitation_train.py
+│   ├──train_README.md
+│   └── train.py     
 ├── weights/
 │   ├──checkpoint-modelA-003.pth
 │   ├──checkpoint-modelB-003.pth
 │   ├──checkpoint-modelC-003.pth
 │   └──checkpoint-modelD-001.pth
-├── main.py          # 学習ループ（自己対局 → 学習 → モデル更新）
+├── main.py          # 実際に対戦
 └── README.md          # メモ
 ```
 
