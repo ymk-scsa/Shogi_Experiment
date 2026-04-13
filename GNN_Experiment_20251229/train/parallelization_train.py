@@ -1,3 +1,16 @@
+"""
+parallelization_train.py
+========================
+
+modelA〜modelH の 8 モデルを、それぞれ独立ワーカープロセスで並列学習するスクリプト。
+
+主な機能:
+- モデルごとの独立ログ出力
+- モデルごとの checkpoint 保存
+- 評価間隔ごとの損失/精度記録
+- 損失グラフ保存（matplotlib がある場合のみ）
+"""
+
 import sys
 import os
 import time
@@ -24,10 +37,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from model.model import create_model
 from game.board import FEATURES_SETTINGS, FEATURES_NUM, MOVE_LABELS_NUM
-from data.buffer import HcpeDataLoader, PsvDataLoader
+from data.past_buffer import HcpeDataLoader, PsvDataLoader
 
 # ===== ロガー設定 =====
 def _get_logger(log_file: str = None, name: str = "train") -> logging.Logger:
+    """
+    学習用ロガーを作成して返す。
+
+    Args:
+        log_file: ログファイルパス。未指定時は標準出力のみ。
+        name: ロガー名（モデルごとに分けるために使用）。
+
+    Returns:
+        設定済みの Logger。
+    """
     logger = logging.getLogger(name)
     if not logger.hasHandlers():
         formatter = logging.Formatter("[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s")
@@ -47,19 +70,44 @@ def _get_logger(log_file: str = None, name: str = "train") -> logging.Logger:
 # ===== 精度・損失計算 =====
 
 def accuracy(y: torch.Tensor, t: torch.Tensor) -> float:
+    """方策出力の top-1 正解率を返す。"""
     return (torch.max(y, 1)[1] == t).sum().item() / len(t)
 
 def binary_accuracy(y: torch.Tensor, t: torch.Tensor) -> float:
+    """
+    価値出力の二値正解率を返す。
+
+    Notes:
+        model の value は tanh 出力 [-1, 1] を想定しているため、
+        (y + 1) / 2 で [0, 1] に変換して閾値 0.5 で判定する。
+    """
     pred = ((y + 1.0) / 2.0) >= 0.5
     truth = t >= 0.5
     return pred.eq(truth).sum().item() / len(t)
 
+# ===== ファイル保存 =====
 def _ensure_dir(path: str) -> None:
+    """
+    親ディレクトリが存在しなければ作成する。
+
+    Args:
+        path: ファイルパスまたはディレクトリパス。
+    """
     d = os.path.dirname(path) if os.path.splitext(path)[1] else path
     if d and not os.path.exists(d):
         os.makedirs(d)
 
 def save_checkpoint(path: str, model, optimizer, epoch: int, step: int) -> None:
+    """
+    学習再開に必要な状態を checkpoint として保存する。
+
+    Args:
+        path: 保存先パス。
+        model: 学習中モデル。
+        optimizer: 対応する optimizer。
+        epoch: 現在エポック。
+        step: 現在ステップ。
+    """
     _ensure_dir(path)
     state_dict = model.state_dict()
     torch.save(
@@ -73,6 +121,14 @@ def save_checkpoint(path: str, model, optimizer, epoch: int, step: int) -> None:
     )
 
 def save_loss_graph(history, mode: str, output_dir="data/"):
+    """
+    指定モデルの損失推移グラフを保存する。
+
+    Args:
+        history: 損失履歴辞書。
+        mode: モデル名（例: modelA）。
+        output_dir: 画像出力先ディレクトリ。
+    """
     if not HAS_MATPLOTLIB:
         return
     _ensure_dir(output_dir)
@@ -100,7 +156,13 @@ def train_worker(
     model_list: List[str]
 ):
     """
-    1つのモデルを担当して学習を行うプロセス。
+    1ワーカープロセスで 1 モデルを担当して学習する。
+
+    Args:
+        rank: ワーカー番号（model_list のインデックスとして使用）。
+        num_gpus: 利用可能 GPU 数。
+        args: CLI 引数。
+        model_list: 学習対象モデル名の配列。
     """
     model_mode = model_list[rank]
     
@@ -111,7 +173,7 @@ def train_worker(
     else:
         device = torch.device("cpu")
     
-    # ログ設定
+    # ログは「モデルごと」にファイルを分けて保存する。
     log_file = os.path.join(args.log_dir, f"train_{model_mode}.log")
     _ensure_dir(log_file)
     logger = _get_logger(log_file, name=model_mode)
@@ -139,7 +201,7 @@ def train_worker(
         args.test_data, args.test_batch, device, features_mode=args.input_features
     )
 
-    # 再開
+    # チェックポイント再開。--resume には "{model}" プレースホルダを使える。
     current_step = 0
     start_epoch = 0
     if args.resume:
@@ -155,7 +217,7 @@ def train_worker(
     
     history = defaultdict(lambda: {"step": [], "p_loss": [], "v_loss": [], "t_loss": []})
     
-    # 信号ハンドラ (Ctrl+C対応)
+    # Ctrl+C を受けたら現在エポックの終わりで安全に保存して停止する。
     stop_requested = False
     def handler(signum, frame):
         nonlocal stop_requested
@@ -166,7 +228,7 @@ def train_worker(
     nll_loss = nn.NLLLoss()
     mse_loss = nn.MSELoss()
 
-    # 学習ループ
+    # ===== 学習ループ =====
     for epoch in range(start_epoch, args.epochs):
         epoch_idx = epoch + 1
         model.train()
@@ -180,7 +242,7 @@ def train_worker(
         for x, move_label, result in train_loader:
             if stop_requested: break
             
-            log_policy, value = model(x)
+            log_policy, value, aux = model(x)
             
             loss_p = nll_loss(log_policy, move_label)
             loss_v = mse_loss((value + 1.0) / 2.0, result)
@@ -195,6 +257,7 @@ def train_worker(
             running_p_loss += loss_p.item()
             running_v_loss += loss_v.item()
             
+            # 一定ステップごとに検証して、ログと損失グラフを更新する。
             if current_step % args.eval_interval == 0:
                 avg_p = running_p_loss / max(1, steps_interval)
                 avg_v = running_v_loss / max(1, steps_interval)
@@ -203,7 +266,7 @@ def train_worker(
                 model.eval()
                 with torch.no_grad():
                     tx, tml, tres = test_loader.sample()
-                    lp_t, v_t = model(tx)
+                    lp_t, v_t, aux_t = model(tx)
                     test_pa = accuracy(lp_t, tml)
                     test_va = binary_accuracy(v_t, tres)
                 
@@ -221,7 +284,7 @@ def train_worker(
                 steps_interval = 0
                 model.train()
 
-        # エポック終了時の保存
+        # エポックごとに必ず checkpoint を保存する。
         cp_name = f"parallel-{model_mode}-ep{epoch_idx:03}.pth"
         save_checkpoint(os.path.join(args.checkpoint_dir, cp_name), model, optimizer, epoch_idx, current_step)
         logger.info("Epoch %d finished. Checkpoint saved: %s", epoch_idx, cp_name)
@@ -234,6 +297,13 @@ def train_worker(
 # ===== メイン処理 =====
 
 def main():
+    """
+    エントリーポイント。
+
+    Notes:
+        modelA〜modelH の 8 ワーカーを mp.spawn で起動し、
+        各ワーカーが独立して 1 モデルずつ学習する。
+    """
     parser = argparse.ArgumentParser(description="Parallel training for modelA-modelH")
     parser.add_argument("--train-data", nargs="+", required=True, help="Path to training data")
     parser.add_argument("--test-data", required=True, help="Path to test data")
