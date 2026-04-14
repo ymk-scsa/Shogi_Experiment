@@ -13,30 +13,28 @@ modelA〜modelH の 8 モデルを、それぞれ独立ワーカープロセス�
 
 import sys
 import os
-import time
 import argparse
 import logging
 import signal
-import numpy as np
+from datetime import datetime
 try:
     import matplotlib.pyplot as plt
     HAS_MATPLOTLIB = True
 except ImportError:
     HAS_MATPLOTLIB = False
 from collections import defaultdict
-from typing import List, Tuple, Optional
+from typing import List
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 import torch.multiprocessing as mp
 
 # プロジェクトルートを sys.path に追加
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from model.model import create_model
-from game.board import FEATURES_SETTINGS, FEATURES_NUM, MOVE_LABELS_NUM
+from game.board import FEATURES_SETTINGS, MOVE_LABELS_NUM
 from data.past_buffer import HcpeDataLoader, PsvDataLoader
 
 # ===== ロガー設定 =====
@@ -173,8 +171,9 @@ def train_worker(
     else:
         device = torch.device("cpu")
     
-    # ログは「モデルごと」にファイルを分けて保存する。
-    log_file = os.path.join(args.log_dir, f"train_{model_mode}.log")
+    # ログはモデルごとに分離し、run_tag を付けてセッション衝突を避ける。
+    log_suffix = f"_{args.run_tag}" if args.run_tag else ""
+    log_file = os.path.join(args.log_dir, f"train_{model_mode}{log_suffix}.log")
     _ensure_dir(log_file)
     logger = _get_logger(log_file, name=model_mode)
     
@@ -224,8 +223,8 @@ def train_worker(
         stop_requested = True
     signal.signal(signal.SIGINT, handler)
 
-    # NLLLoss and MSELoss
-    nll_loss = nn.NLLLoss()
+    # Policy は生logitsを返すため CrossEntropyLoss を使う。
+    ce_loss = nn.CrossEntropyLoss()
     mse_loss = nn.MSELoss()
 
     # ===== 学習ループ =====
@@ -242,9 +241,10 @@ def train_worker(
         for x, move_label, result in train_loader:
             if stop_requested: break
             
-            log_policy, value, aux = model(x)
+            # 補助出力は使わないため、返り値は policy/value の2要素に固定する。
+            policy_logits, value = model(x, return_aux=False)
             
-            loss_p = nll_loss(log_policy, move_label)
+            loss_p = ce_loss(policy_logits, move_label)
             loss_v = mse_loss((value + 1.0) / 2.0, result)
             loss = loss_p + loss_v
             
@@ -264,11 +264,16 @@ def train_worker(
                 
                 # バリデーション
                 model.eval()
+                test_pa_sum = 0.0
+                test_va_sum = 0.0
                 with torch.no_grad():
-                    tx, tml, tres = test_loader.sample()
-                    lp_t, v_t, aux_t = model(tx)
-                    test_pa = accuracy(lp_t, tml)
-                    test_va = binary_accuracy(v_t, tres)
+                    for _ in range(args.eval_batches):
+                        tx, tml, tres = test_loader.sample()
+                        p_t, v_t = model(tx, return_aux=False)
+                        test_pa_sum += accuracy(p_t, tml)
+                        test_va_sum += binary_accuracy(v_t, tres)
+                test_pa = test_pa_sum / max(1, args.eval_batches)
+                test_va = test_va_sum / max(1, args.eval_batches)
                 
                 logger.info("Epoch %d Step %d | Train Loss(P/V): %.4f/%.4f | Test Acc(P/V): %.4f/%.4f", 
                             epoch_idx, current_step, avg_p, avg_v, test_pa, test_va)
@@ -285,13 +290,20 @@ def train_worker(
                 model.train()
 
         # エポックごとに必ず checkpoint を保存する。
-        cp_name = f"parallel-{model_mode}-ep{epoch_idx:03}.pth"
+        cp_suffix = f"-{args.run_tag}" if args.run_tag else ""
+        cp_name = f"parallel-{model_mode}-ep{epoch_idx:03}{cp_suffix}.pth"
         save_checkpoint(os.path.join(args.checkpoint_dir, cp_name), model, optimizer, epoch_idx, current_step)
         logger.info("Epoch %d finished. Checkpoint saved: %s", epoch_idx, cp_name)
         
         if stop_requested:
             logger.info("Interrupt received. Saving interrupted state...")
-            save_checkpoint(os.path.join(args.checkpoint_dir, f"interrupted-{model_mode}.pth"), model, optimizer, epoch_idx, current_step)
+            save_checkpoint(
+                os.path.join(args.checkpoint_dir, f"interrupted-{model_mode}{cp_suffix}.pth"),
+                model,
+                optimizer,
+                epoch_idx,
+                current_step,
+            )
             break
 
 # ===== メイン処理 =====
@@ -307,21 +319,37 @@ def main():
     parser = argparse.ArgumentParser(description="Parallel training for modelA-modelH")
     parser.add_argument("--train-data", nargs="+", required=True, help="Path to training data")
     parser.add_argument("--test-data", required=True, help="Path to test data")
-    parser.add_argument("--batch", type=int, default=1024, choices=[256, 1024, 4096], help="Batch size")
+    parser.add_argument("--batch", type=int, default=1024, choices=[256, 1024, 2048, 4096], help="Batch size")
     parser.add_argument("--test-batch", type=int, default=1024)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--checkpoint-dir", default="weights_parallel/")
     parser.add_argument("--log-dir", default="data_parallel/")
     parser.add_argument("--eval-interval", type=int, default=100)
+    parser.add_argument("--eval-batches", type=int, default=4, help="Number of random test batches per evaluation")
     parser.add_argument("--input-features", type=int, default=0)
     parser.add_argument("--format", default="hcpe", choices=["hcpe", "psv"])
     parser.add_argument("--resume", default="", help="Resume path template with {model}")
+    parser.add_argument("--models", default="modelA,modelB,modelC,modelD,modelE,modelF,modelG,modelH",
+                        help="Comma-separated model list (e.g. fastA,modelB)")
+    parser.add_argument("--run-tag", default="", help="Optional suffix for log/checkpoint files")
     
     args = parser.parse_args()
     
-    # 8つのモデルを定義
-    model_list = ["modelA", "modelB", "modelC", "modelD", "modelE", "modelF", "modelG", "modelH"]
+    if args.eval_batches < 1:
+        raise ValueError("--eval-batches must be >= 1")
+
+    # run-tag 未指定時はタイムスタンプを使ってログ衝突を避ける。
+    if not args.run_tag:
+        args.run_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # 学習対象モデル一覧
+    # 全部パターン
+    # model_list = [m.strip() for m in args.models.split(",") if m.strip()]
+    # fastAパターン
+    model_list = ["fastA"]
+    if not model_list:
+        raise ValueError("No models specified. Please set --models.")
     num_workers = len(model_list)
     
     # GPU数の確認

@@ -187,7 +187,11 @@ class HybridAlphaZeroNet(nn.Module):
         policy = self.policy_head(h)
         value = self.value_head(h)
 
-        if not self.training and not return_aux:
+        # return_aux=False は train/eval を問わず優先する。
+        # 学習時は生logits（CrossEntropyLoss前提）、推論時はlog_softmaxを返す。
+        if not return_aux:
+            if self.training:
+                return policy, value
             return F.log_softmax(policy, dim=1), value
 
         # 補助タスクの計算
@@ -222,7 +226,7 @@ def create_model(input_channels, num_actions, mode="30blocks"):
 
     elif mode == "modelB":
         # モデルB: CNN 5ブロック + GCN 5ブロック (計10)
-        config = ['CRE'] * 20 + ['SWN'] * 10
+        config = ['CRE'] * 20 + ['OSE'] * 10
 
     elif mode == "modelC":
         # モデルC: CNN 30ブロック
@@ -230,7 +234,7 @@ def create_model(input_channels, num_actions, mode="30blocks"):
 
     elif mode == "modelD" or mode == "30blocks":
         # モデルD: (CNN 5 + GCN 5) を 3回繰り返す (計30)
-        config = ['MV3'] * 15 + ['SV2'] * 15
+        config = ['OM3'] * 15 + ['OSB'] * 15
     
     elif mode == "modelE" or mode == "30blocks":
         # モデルE: (CNN 5 + GCN 5) を 3回繰り返す (計30)
@@ -247,6 +251,10 @@ def create_model(input_channels, num_actions, mode="30blocks"):
     elif mode == "modelH" or mode == "30blocks":
         # モデルH: (CNN 5 + GCN 5) を 3回繰り返す (計30)
         config = (['CRE'] * 3 + ['GSC'] * 2 + ['TLA'] * 1) * 5
+        
+    elif mode == "fastA":
+        # モデルB: OMM 5ブロック + OSE 5ブロック (計10)
+        config = ['OMM'] * 5 + ['OSE'] * 5
 
     else:
         # デフォルト設定（どれにも当てはまらない場合）

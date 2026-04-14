@@ -9,14 +9,13 @@ from collections import defaultdict # 追加
 
 import torch
 import torch.optim as optim
-import torch.nn.functional as F
 
 # プロジェクトルートを sys.path に追加
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from model.model import create_model
-from game.board import FEATURES_SETTINGS, FEATURES_NUM, MOVE_LABELS_NUM
-from Shogi_Experience.GNN_Experiment_20251229.data.past_buffer import HcpeDataLoader, PsvDataLoader
+from game.board import FEATURES_SETTINGS, MOVE_LABELS_NUM
+from data.past_buffer import HcpeDataLoader, PsvDataLoader
 
 
 # ===== ロガー設定 =====
@@ -80,9 +79,9 @@ def save_checkpoint(path: str, model, optimizer, epoch: int, step: int) -> None:
 def evaluate(model, dataloader, device) -> dict:
     """
     テストデータでモデルを評価して損失・正解率を返す。
-    policy: NLLLoss / value: MSELoss
+    policy: CrossEntropyLoss / value: MSELoss
     """
-    nll_loss = torch.nn.NLLLoss()
+    ce_loss = torch.nn.CrossEntropyLoss()
     mse_loss = torch.nn.MSELoss()
 
     model.eval()
@@ -96,12 +95,12 @@ def evaluate(model, dataloader, device) -> dict:
 
     with torch.no_grad():
         for x, move_label, result in dataloader:
-            log_policy, value = model(x)
-            pl = nll_loss(log_policy, move_label).item()
+            policy_logits, value = model(x, return_aux=False)
+            pl = ce_loss(policy_logits, move_label).item()
             vl = mse_loss((value + 1.0) / 2.0, result).item()
             total_pl += pl
             total_vl += vl
-            total_pa += accuracy(log_policy, move_label)
+            total_pa += accuracy(policy_logits, move_label)
             total_va += binary_accuracy(value, result)
             steps += 1
     return {
@@ -184,11 +183,10 @@ def train(
     input_ch = features_setting.features_num
     logger.info("input_channels=%d", input_ch)
     
-    # 損失関数の定義
-    nll_loss = torch.nn.NLLLoss()
+    # 損失関数の定義（policy は生logitsを返す想定）
+    ce_loss = torch.nn.CrossEntropyLoss()
     mse_loss = torch.nn.MSELoss()
 
-    # --- 修正箇所：マルチGPU対応 ---
     # --- 修正箇所：マルチGPU対応 ---
     num_gpus = torch.cuda.device_count() if gpu >= 0 else 0
     device = torch.device(f"cuda:{gpu}") if gpu >= 0 else torch.device("cpu")
@@ -300,8 +298,8 @@ def train(
                 stats = epoch_stats[m_idx]
 
                 model.train()
-                log_policy, value = model(x)
-                loss_policy = nll_loss(log_policy, move_label)
+                policy_logits, value = model(x, return_aux=False)
+                loss_policy = ce_loss(policy_logits, move_label)
                 value_01 = (value + 1.0) / 2.0
                 loss_value = mse_loss(value_01, result)
                 loss = loss_policy + loss_value
@@ -320,10 +318,10 @@ def train(
                     model.eval()
                     x_t, ml_t, res_t = test_loader.sample()
                     with torch.no_grad():
-                        lp_t, v_t = model(x_t)
-                        test_pl = nll_loss(lp_t, ml_t).item()
+                        p_t, v_t = model(x_t, return_aux=False)
+                        test_pl = ce_loss(p_t, ml_t).item()
                         test_vl = mse_loss((v_t + 1.0) / 2.0, res_t).item()
-                        test_pa = accuracy(lp_t, ml_t)
+                        test_pa = accuracy(p_t, ml_t)
                         test_va = binary_accuracy(v_t, res_t)
 
                     logger.info(
