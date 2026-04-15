@@ -78,10 +78,10 @@ class HybridAlphaZeroNet(nn.Module):
         # Policy Head: 次の指し手の確率
         self.policy_head = nn.Sequential(
             nn.Conv2d(256, 32, kernel_size=1), #カーネルサイズの圧縮を2から32に変更
-            nn.BatchNorm2d(2),
+            nn.BatchNorm2d(32),
             nn.GELU(), #活性化関数をReLUから勾配損失に強いGELUに変更
             nn.Flatten(),
-            nn.Linear(2 * 9 * 9, num_actions)
+            nn.Linear(32 * 9 * 9, num_actions)
         )
 
         # Value Head: 勝率評価 (-1 〜 1) 
@@ -201,8 +201,6 @@ class HybridAlphaZeroNet(nn.Module):
             'move_feature': self.head_move_feature(h),
             'future_rep': self.head_future(h),
             'search_rep': self.head_search(h),
-            
-            'policy_entropy': self.head_policy_entropy(h),
         }
         return policy, value, aux
 # ---------------------------------------------------------
