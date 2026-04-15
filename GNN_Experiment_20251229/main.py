@@ -8,18 +8,19 @@ MCTSPlayer（search/mcts.py）を呼び出す。
 import sys
 import os
 from concurrent.futures import ThreadPoolExecutor, Future
-from typing import Optional
+from typing import Optional, Union
 
 # プロジェクトルートをパスに追加
 sys.path.insert(0, os.path.dirname(__file__))
 
 from search.mcts import MCTSPlayer
+from search.npls import NPLSPlayer
 
 # USI コマンドの戻り値の型エイリアス (bestmove, ponder_move)
 UsiResponse = tuple
 
 
-def run(player: MCTSPlayer) -> None:
+def run(player: Union[MCTSPlayer, NPLSPlayer]) -> None:
     """
     USI 通信ループ。
     標準入力からコマンドを1行ずつ読み込み、対応するメソッドを呼び出す。
@@ -131,14 +132,23 @@ if __name__ == "__main__":
     parser.add_argument("--mode", type=str, default="30blocks", help="Model architecture mode (modelA, modelB, etc.)")
     parser.add_argument("--weights", type=str, default="weights/checkpoint.pth", help="Path to weights file")
     parser.add_argument("--name", type=str, default="GNN-Shogi", help="USI engine name")
+    parser.add_argument("--search_type", type=str, default="mcts", choices=["mcts", "npls"], help="Search algorithm type (mcts or npls)")
     args = parser.parse_args()
 
-    # 引数に基づいて MCTSPlayer を起動
-    player = MCTSPlayer(
-        features_mode=0,         # 0: standard (46ch)
-        blocks_config_mode=args.mode,
-        name=args.name,
-        modelfile=args.weights,
-    )
+    # 引数に基づいて Player を起動
+    if args.search_type == "npls":
+        player = NPLSPlayer(
+            features_mode=0,         # 0: standard (46ch)
+            blocks_config_mode=args.mode,
+            name=args.name + " (NPLS)",
+            modelfile=args.weights,
+        )
+    else:
+        player = MCTSPlayer(
+            features_mode=0,         # 0: standard (46ch)
+            blocks_config_mode=args.mode,
+            name=args.name,
+            modelfile=args.weights,
+        )
     run(player)
 
