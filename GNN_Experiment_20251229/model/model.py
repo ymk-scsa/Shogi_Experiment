@@ -77,33 +77,25 @@ class HybridAlphaZeroNet(nn.Module):
 
         # Policy Head: 次の指し手の確率
         self.policy_head = nn.Sequential(
-            nn.Conv2d(256, 2, kernel_size=1),
+            nn.Conv2d(256, 32, kernel_size=1), #カーネルサイズの圧縮を2から32に変更
             nn.BatchNorm2d(2),
-            nn.ReLU(),
+            nn.GELU(), #活性化関数をReLUから勾配損失に強いGELUに変更
             nn.Flatten(),
             nn.Linear(2 * 9 * 9, num_actions)
         )
 
-        # Value Head: 勝率評価 (-1 〜 1)
+        # Value Head: 勝率評価 (-1 〜 1) 
         self.value_head = nn.Sequential(
-            nn.Conv2d(256, 1, kernel_size=1),
-            nn.BatchNorm2d(1),
-            nn.ReLU(),
+            nn.Conv2d(256, 16, kernel_size=1), # ここも1から16に少しチャンネルを増やす
+            nn.BatchNorm2d(16),
+            nn.GELU(), #活性化関数をReLUから勾配損失に強いGELUに変更
             nn.Flatten(),
-            nn.Linear(1 * 9 * 9, 256),
-            nn.ReLU(),
+            nn.Linear(16 * 9 * 9, 256),
+            nn.GELU(),
             nn.Linear(256, 1),
-            nn.Tanh()
+            nn.Tanh() # 勝率 -1 〜 1
         )
         
-        # --------------------------------
-        # Policy Entropy Head
-        # --------------------------------
-        self.head_policy_entropy = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Flatten(),
-            nn.Linear(256, 1)
-        )
         
         # --- 補助タスクヘッド ---
         # 1. King Safety (自玉・敵玉の安全度: Scalar 2)
