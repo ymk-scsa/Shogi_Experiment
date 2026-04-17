@@ -51,6 +51,9 @@ DEFAULT_BETA    = 0.5  # Policy
 DEFAULT_GAMMA   = 0.2  # Depth
 DEFAULT_DELTA   = 0.3  # Uncertainty (Entropy)
 DEFAULT_EPSILON = 0.5  # Exploration (1/sqrt(N))
+# 追加（NPLSパラメータの下）UW-NPLS
+DEFAULT_ZETA = 0.7  # Uncertainty bonus (NEW)
+DEFAULT_VAR_PENALTY = 0.3  # Root variance penalty (NEW)
 
 @dataclass(order=True)
 class NPLSNode:
@@ -74,6 +77,7 @@ class RootMoveStats:
         self.stats = defaultdict(lambda: {
             "max_value": -float("inf"),
             "sum_value": 0.0,
+            "sum_sq": 0.0,  # NEW
             "count": 0
         })
 
@@ -81,22 +85,40 @@ class RootMoveStats:
         s = self.stats[move]
         s["max_value"] = max(s["max_value"], value)
         s["sum_value"] += value
+        s["sum_sq"] += value * value  # NEW
         s["count"] += 1
 
-    def score(self, move, w_max=0.6, w_mean=0.3, w_count=0.1):
+    def score(self, move,
+              w_max=0.6,
+              w_mean=0.3,
+              w_count=0.1,
+              var_penalty=0.3):
+
         s = self.stats[move]
-        if s["count"] == 0: return -float("inf")
+        if s["count"] == 0:
+            return -float("inf")
+
         mean = s["sum_value"] / s["count"]
+
+        variance = max(
+            (s["sum_sq"] / s["count"]) - mean * mean,
+            0.0
+        )
+
         return (
             w_max * s["max_value"]
             + w_mean * mean
             + w_count * math.log(s["count"] + 1)
+            - var_penalty * variance  # NEW
         )
 
-    def best_move(self):
+    def best_move(self, var_penalty=0.3):
         if not self.stats:
             return None
-        return max(self.stats.keys(), key=lambda m: self.score(m))
+        return max(
+            self.stats.keys(),
+            key=lambda m: self.score(m, var_penalty=var_penalty)
+        )
 
 class NPLSPlayer:
     """
@@ -134,6 +156,8 @@ class NPLSPlayer:
         self.gamma = DEFAULT_GAMMA
         self.delta = DEFAULT_DELTA
         self.epsilon = DEFAULT_EPSILON
+        self.zeta = DEFAULT_ZETA
+        self.var_penalty = DEFAULT_VAR_PENALTY
 
         self.transposition_table = {}
         self.open_list = []
@@ -149,6 +173,8 @@ class NPLSPlayer:
         print(f"option name gamma type spin default {int(self.gamma*100)} min 0 max 1000")
         print(f"option name delta type spin default {int(self.delta*100)} min 0 max 1000")
         print(f"option name epsilon type spin default {int(self.epsilon*100)} min 0 max 1000")
+        print(f"option name zeta type spin default {int(self.zeta*100)} min 0 max 1000")
+        print(f"option name var_penalty type spin default {int(self.var_penalty*100)} min 0 max 1000")
         print("option name debug type check default false")
 
     def setoption(self, args: list) -> None:
@@ -166,6 +192,10 @@ class NPLSPlayer:
             self.delta = int(args[3]) / 100
         elif args[1] == "epsilon":
             self.epsilon = int(args[3]) / 100
+        elif args[1] == "zeta":
+            self.zeta = int(args[3]) / 100
+        elif args[1] == "var_penalty":
+            self.var_penalty = int(args[3]) / 100  
         elif args[1] == "debug":
             self.debug = args[3] == "true"
 
@@ -227,12 +257,16 @@ class NPLSPlayer:
         U = node.uncertainty
         E = 1.0 / math.sqrt(node.visit_count + 1)
 
+        # ===== UW-NPLS 拡張 =====
+        UW = U / (1.0 + math.sqrt(node.visit_count))
+
         return (
             self.alpha * Q
             + self.beta * P
             + self.gamma * D
             + self.delta * U
             + self.epsilon * E
+            + self.zeta * UW   # NEW
         )
 
     def push_node(self, node: NPLSNode):
@@ -337,7 +371,7 @@ class NPLSPlayer:
             if self.nodes_searched % 100 == 0 and self.debug:
                 print(f"info nodes {self.nodes_searched} time {int(elapsed)} score cp {int(root_value*1000)}")
 
-        best_move = self.root_stats.best_move()
+        best_move = self.root_stats.best_move(self.var_penalty)
         if best_move is None:
             # 万が一探索に失敗した場合は合法手から適当に選ぶ
             best_move = list(self.root_board.legal_moves)[0]
