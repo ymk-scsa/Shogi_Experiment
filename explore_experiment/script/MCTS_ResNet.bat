@@ -1,0 +1,3 @@
+@echo off
+
+@wsl -d Ubuntu-22.04 bash -c "cd /mnt/c/Users/kotet/Documents/program/Shogi_Experiment/explore_experiment && source /mnt/c/Users/kotet/Documents/program/Shogi_Experiment/GNN_Experiment_20251229/.venv/bin/activate && python player/mcts_player.py"
