@@ -39,6 +39,7 @@ def train(
     eval_interval: Annotated[int, typer.Option(help="evaluation interval")] = 100,
     log: Annotated[Optional[str], typer.Option(help="log file path")] = None,
     blocks: Annotated[int, typer.Option(help="nn resnet blocks length")] = 10,
+    channels: Annotated[int, typer.Option(help="nn resnet channels length")] = 192,
 ) -> None:
     """Train policy value network"""
 
@@ -56,6 +57,7 @@ def train(
     # モデル
     model = PolicyValueResNetModel(
         blocks=blocks,
+        channels=channels,
         input_features=FEATURES_NUM,
         activation_function=F.relu,
     )

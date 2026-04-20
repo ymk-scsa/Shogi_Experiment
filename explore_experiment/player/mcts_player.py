@@ -100,7 +100,7 @@ class MCTSPlayer(BasePlayer):
     # USIエンジンの名前
     name = "257"
     # デフォルトチェックポイント
-    DEFAULT_MODELFILE = "checkpoint/resnet_10/cache/checkpoint-002.pth"
+    DEFAULT_MODELFILE = "checkpoint/resnet_10/cache/checkpoint-006.pth"
 
     def __init__(self, blocks: int = 10) -> None:
         super().__init__()
