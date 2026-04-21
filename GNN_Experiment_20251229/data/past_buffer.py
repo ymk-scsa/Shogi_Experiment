@@ -121,11 +121,12 @@ class HcpeDataLoader:
 
     def pre_fetch(self) -> None:
         """次のバッチを非同期で事前取得する。"""
+        if self.i + self.batch_size > len(self.data):
+            self.f = None
+            return
+
         hcpevec = self.data[self.i: self.i + self.batch_size]
         self.i += self.batch_size
-        if len(hcpevec) < self.batch_size:
-            _logger.debug("Reached end of data (len=%d < batch_size=%d)", len(hcpevec), self.batch_size)
-            return
         self.f = self.executor.submit(self.mini_batch, hcpevec)
 
     def __len__(self) -> int:
@@ -140,9 +141,12 @@ class HcpeDataLoader:
         return self
 
     def __next__(self) -> tuple:
-        if self.l > len(self.data):
+        if self.f is None:
             raise StopIteration()
-        result = self.f.result()
+        try:
+            result = self.f.result()
+        except Exception:
+            raise StopIteration()
         self.l = self.i
         self.pre_fetch()
         return result
@@ -266,11 +270,12 @@ class PsvDataLoader:
 
     def pre_fetch(self) -> None:
         """次のバッチを非同期で事前取得する。"""
+        if self.i + self.batch_size > len(self.data):
+            self.f = None
+            return
+
         hcpevec = self.data[self.i: self.i + self.batch_size]
         self.i += self.batch_size
-        if len(hcpevec) < self.batch_size:
-            _logger.debug("Reached end of data (len=%d < batch_size=%d)", len(hcpevec), self.batch_size)
-            return
         self.f = self.executor.submit(self.mini_batch, hcpevec)
 
     def __len__(self) -> int:
@@ -285,9 +290,12 @@ class PsvDataLoader:
         return self
 
     def __next__(self) -> tuple:
-        if self.l > len(self.data):
+        if self.f is None:
             raise StopIteration()
-        result = self.f.result()
+        try:
+            result = self.f.result()
+        except Exception:
+            raise StopIteration()
         self.l = self.i
         self.pre_fetch()
         return result

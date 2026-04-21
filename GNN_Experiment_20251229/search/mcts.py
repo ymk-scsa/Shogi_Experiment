@@ -11,6 +11,7 @@ import time
 import math
 import sys
 import os
+import torch.nn.functional as F
 from typing import Optional, Union
 
 from cshogi import (
@@ -644,16 +645,16 @@ class MCTSPlayer:
     def infer(self) -> tuple:
         """
         HybridAlphaZeroNet で推論する。
-        policy: log_softmax → exp() で確率に変換
+        policy: raw logits -> softmax で確率に変換
         value:  Tanh [-1,1] → (v+1)/2 で [0,1] に正規化
         """
         with torch.no_grad():
             if self.features is None or self.model is None:
                 raise ValueError("features or model is None")
             x = self.features[0: self.current_batch_index].to(self.device)
-            log_policy, value = self.model(x)
-            # log_softmax → softmax 確率
-            policy = torch.exp(log_policy).cpu().numpy()
+            policy_logits, value = self.model(x, return_aux=False)
+            # raw logits → softmax 確率
+            policy = F.softmax(policy_logits, dim=1).cpu().numpy()
             # Tanh [-1,1] → [0,1]
             win_rate = ((value + 1.0) / 2.0).cpu().numpy()
             return policy, win_rate

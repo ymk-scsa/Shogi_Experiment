@@ -344,10 +344,7 @@ def main():
         args.run_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # 学習対象モデル一覧
-    # 全部パターン
-    # model_list = [m.strip() for m in args.models.split(",") if m.strip()]
-    # fastAパターン
-    model_list = ["fastA"]
+    model_list = [m.strip() for m in args.models.split(",") if m.strip()]
     if not model_list:
         raise ValueError("No models specified. Please set --models.")
     num_workers = len(model_list)

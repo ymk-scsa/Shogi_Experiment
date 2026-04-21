@@ -180,11 +180,8 @@ class HybridAlphaZeroNet(nn.Module):
         value = self.value_head(h)
 
         # return_aux=False は train/eval を問わず優先する。
-        # 学習時は生logits（CrossEntropyLoss前提）、推論時はlog_softmaxを返す。
         if not return_aux:
-            if self.training:
-                return policy, value
-            return F.log_softmax(policy, dim=1), value
+            return policy, value
 
         # 補助タスクの計算
         aux = {
