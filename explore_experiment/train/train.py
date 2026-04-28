@@ -9,13 +9,13 @@ if str(_ROOT) not in sys.path:
 import signal
 import torch
 import torch.optim as optim
-import torch.nn.functional as F
 from typing import Optional
 import time
 
 from shogi.feature import FEATURES_NUM
+from model.activation_function import resolve_activation_function
 from model.model import PolicyValueResNetModel
-from util.dataloader import HcpeDataLoader
+from util.dataloader import HcpeDataLoader, PsvDataLoader
 from util.directory import ensure_directory_exists
 from util.logger import Logger
 from typing_extensions import Annotated
@@ -40,12 +40,21 @@ def train(
     log: Annotated[Optional[str], typer.Option(help="log file path")] = None,
     blocks: Annotated[int, typer.Option(help="nn resnet blocks length")] = 10,
     channels: Annotated[int, typer.Option(help="nn resnet channels length")] = 192,
+    activation_function: Annotated[str, typer.Option(help="activation function")] = "relu",
+    data_format: Annotated[str, typer.Option(help="training data format: hcpe or psv")] = "hcpe",
+    psv_score_scale: Annotated[float, typer.Option(help="PSV score sigmoid scale (cp)")] = 600.0,
 ) -> None:
     """Train policy value network"""
 
     logging = Logger("train", log_file=log).get_logger()
     logging.info("batchsize={}".format(batchsize))
     logging.info("lr={}".format(lr))
+    logging.info("activation_function={}".format(activation_function))
+    logging.info("data_format={}".format(data_format))
+
+    fmt = data_format.strip().lower()
+    if fmt not in ("hcpe", "psv"):
+        raise ValueError("data_format must be 'hcpe' or 'psv', got {!r}".format(data_format))
 
     # デバイス
     if gpu >= 0:
@@ -59,7 +68,7 @@ def train(
         blocks=blocks,
         channels=channels,
         input_features=FEATURES_NUM,
-        activation_function=F.relu,
+        activation_function=resolve_activation_function(activation_function),
     )
     model.to(device)
 
@@ -86,10 +95,30 @@ def train(
 
     # 訓練データ読み込み
     logging.info("Reading training data")
-    train_dataloader = HcpeDataLoader(train_data, batchsize, device, shuffle=True, features_num=FEATURES_NUM)
+    if fmt == "psv":
+        train_dataloader = PsvDataLoader(
+            train_data,
+            batchsize,
+            device,
+            shuffle=True,
+            features_num=FEATURES_NUM,
+            score_scale=psv_score_scale,
+        )
+    else:
+        train_dataloader = HcpeDataLoader(train_data, batchsize, device, shuffle=True, features_num=FEATURES_NUM)
     # テストデータ読み込み
     logging.info("Reading test data")
-    test_dataloader = HcpeDataLoader(test_data, testbatchsize, device, features_num=FEATURES_NUM)
+    if fmt == "psv":
+        test_dataloader = PsvDataLoader(
+            test_data,
+            testbatchsize,
+            device,
+            shuffle=False,
+            features_num=FEATURES_NUM,
+            score_scale=psv_score_scale,
+        )
+    else:
+        test_dataloader = HcpeDataLoader(test_data, testbatchsize, device, features_num=FEATURES_NUM)
 
     # 読み込んだデータ数を表示
     logging.info("train position num = {}".format(len(train_dataloader)))

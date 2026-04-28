@@ -9,7 +9,6 @@ if str(_ROOT) not in sys.path:
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from typing import Optional, Union
 
 from cshogi import (
@@ -23,8 +22,8 @@ from cshogi import (
 )
 from player.uct_node import NodeTree, UctNode
 from player.base_player import BasePlayer
-from model.model import PolicyValueResNetModel
-from shogi.feature import FEATURES_NUM, make_move_label, make_input_features
+from player.evaluator import Evaluator, create_evaluator
+from shogi.feature import make_move_label
 
 import time
 import math
@@ -47,6 +46,10 @@ DEFAULT_BYOYOMI_MARGIN = 100
 DEFAULT_PV_INTERVAL = 500
 # デフォルトプレイアウト数
 DEFAULT_CONST_PLAYOUT = 1000
+# デフォルトのブロック数
+DEFAULT_BLOCKS = 20
+# デフォルト活性化関数
+DEFAULT_ACTIVATION_FUNCTION = "relu"
 # 勝ちを表す定数（数値に意味はない）
 VALUE_WIN = 10000
 # 負けを表す定数（数値に意味はない）
@@ -90,26 +93,26 @@ class EvalQueueElement:
     def __init__(self) -> None:
         self.node: Optional[UctNode] = None
         self.color: Optional[int] = None
+        self.board: Optional[Board] = None
 
-    def set(self, node: UctNode, color: int) -> None:
+    def set(self, node: UctNode, color: int, board: Board) -> None:
         self.node = node
         self.color = color
+        self.board = board
 
 
 class MCTSPlayer(BasePlayer):
     # USIエンジンの名前
     name = "257"
     # デフォルトチェックポイント
-    DEFAULT_MODELFILE = "checkpoint/resnet_10/cache/checkpoint-006.pth"
+    DEFAULT_MODELFILE = "checkpoint/resnet_20/checkpoint-017.pth"
 
-    def __init__(self, blocks: int = 10) -> None:
+    def __init__(self) -> None:
         super().__init__()
         # チェックポイントのパス
         self.modelfile: str = self.DEFAULT_MODELFILE
-        # モデル
-        self.model: Optional[PolicyValueNetwork] = None
-        # 入力特徴量
-        self.features: Optional[torch.Tensor] = None
+        self.eval_type: str = "resnet"
+        self.evaluator: Optional[Evaluator] = None
         # 評価待ちキュー
         self.eval_queue: Optional[list[EvalQueueElement]] = None
         # バッチインデックス
@@ -145,7 +148,8 @@ class MCTSPlayer(BasePlayer):
         # PV表示間隔
         self.pv_interval: int = DEFAULT_PV_INTERVAL
 
-        self.blocks = blocks
+        self.blocks = DEFAULT_BLOCKS
+        self.activation_function: str = DEFAULT_ACTIVATION_FUNCTION
 
         self.debug = False
 
@@ -165,6 +169,12 @@ class MCTSPlayer(BasePlayer):
         print("option name time_margin type spin default " + str(DEFAULT_TIME_MARGIN) + " min 0 max 1000")
         print("option name byoyomi_margin type spin default " + str(DEFAULT_BYOYOMI_MARGIN) + " min 0 max 1000")
         print("option name pv_interval type spin default " + str(DEFAULT_PV_INTERVAL) + " min 0 max 10000")
+        print("option name blocks type spin default " + str(DEFAULT_BLOCKS) + " min 1 max 30")
+        print(
+            "option name activation_function type combo default relu"
+            + " var relu var leaky_relu var soft_sin var scaled_arc_tanh var quadratic var cube_root var squash_two"
+        )
+        print("option name eval_type type combo default resnet var resnet var nnue")
         print("option name debug type check default false")
 
     def setoption(self, args: list[str]) -> None:
@@ -186,29 +196,24 @@ class MCTSPlayer(BasePlayer):
             self.byoyomi_margin = int(args[3])
         elif args[1] == "pv_interval":
             self.pv_interval = int(args[3])
+        elif args[1] == "eval_type":
+            self.eval_type = args[3]
+        elif args[1] == "blocks":
+            self.blocks = int(args[3])
+        elif args[1] == "activation_function":
+            self.activation_function = args[3]
         elif args[1] == "debug":
             self.debug = args[3] == "true"
 
-    # モデルのロード
-    def load_model(self) -> None:
-        self.model = PolicyValueResNetModel(
-            input_features=FEATURES_NUM,
-            activation_function=F.relu,
+    def load_evaluator(self) -> None:
+        self.evaluator = create_evaluator(
+            eval_type=self.eval_type,
+            device=self.device,
+            modelfile=self.modelfile,
             blocks=self.blocks,
+            activation_function=self.activation_function,
         )
-        self.model.to(self.device)
-        checkpoint = torch.load(self.modelfile, map_location=self.device)
-        self.model.load_state_dict(checkpoint["model"])
-        # モデルを評価モードにする
-        self.model.eval()
-
-    # 入力特徴量の初期化
-    def init_features(self) -> None:
-        self.features = torch.empty(
-            (self.batch_size, FEATURES_NUM, 9, 9),
-            dtype=torch.float32,
-            pin_memory=(self.gpu_id >= 0),
-        )
+        self.evaluator.warmup()
 
     def isready(self) -> None:
         # デバイス
@@ -217,15 +222,14 @@ class MCTSPlayer(BasePlayer):
         else:
             self.device = torch.device("cpu")
 
-        # モデルをロード
-        self.load_model()
+        # 評価器をロード
+        self.load_evaluator()
 
         # 局面初期化
         self.root_board.reset()
         self.tree.reset_to_position(self.root_board.zobrist_hash(), [])
 
-        # 入力特徴量と評価待ちキューを初期化
-        self.init_features()
+        # 評価待ちキューを初期化
         self.eval_queue = [EvalQueueElement() for _ in range(self.batch_size)]
         self.current_batch_index = 0
 
@@ -650,30 +654,13 @@ class MCTSPlayer(BasePlayer):
 
         return True
 
-    # 入力特徴量の作成
-    def make_input_features(self, board: Board) -> None:
-        features_numpy = self.features.numpy()
-        make_input_features(board, features_numpy[self.current_batch_index])
-
     # ノードをキューに追加
     def queue_node(self, board: Board, node: UctNode) -> None:
-        # 入力特徴量を作成
-        self.make_input_features(board)
-
         # ノードをキューに追加
         if self.eval_queue is None:
             raise ValueError("eval_queue is None")
-        self.eval_queue[self.current_batch_index].set(node, board.turn)
+        self.eval_queue[self.current_batch_index].set(node, board.turn, board.copy())
         self.current_batch_index += 1
-
-    # 推論
-    def infer(self) -> tuple[np.ndarray, np.ndarray]:
-        with torch.no_grad():
-            if self.features is None or self.model is None:
-                raise ValueError("features or model is None")
-            x = self.features[0 : self.current_batch_index].to(self.device)
-            policy_logits, value_logits = self.model(x)
-            return policy_logits.cpu().numpy(), torch.sigmoid(value_logits).cpu().numpy()
 
     # 着手を表すラベル作成
     def make_move_label(self, move: int, color: int) -> int:
@@ -681,26 +668,28 @@ class MCTSPlayer(BasePlayer):
 
     # 局面の評価
     def eval_node(self) -> None:
-        # 推論
-        policy_logits, values = self.infer()
+        if self.evaluator is None or self.eval_queue is None:
+            raise ValueError("evaluator or eval_queue is None")
 
-        for i, (policy_logit, value) in enumerate(zip(policy_logits, values)):
-            current_node = self.eval_queue[i].node
-            color = self.eval_queue[i].color
+        boards: list[Board] = []
+        legal_moves_batch: list[list[int]] = []
+        colors: list[int] = []
+        nodes: list[UctNode] = []
+        for i in range(self.current_batch_index):
+            e = self.eval_queue[i]
+            if e.node is None or e.board is None or e.color is None:
+                continue
+            nodes.append(e.node)
+            boards.append(e.board)
+            colors.append(e.color)
+            legal_moves_batch.append(list(e.node.child_move))
 
-            # 合法手一覧
-            legal_move_probabilities = np.empty(len(current_node.child_move), dtype=np.float32)
-            for j in range(len(current_node.child_move)):
-                move = current_node.child_move[j]
-                move_label = self.make_move_label(move, color)
-                legal_move_probabilities[j] = policy_logit[move_label]
-
-            # Boltzmann分布
-            probabilities = softmax_temperature_with_normalize(legal_move_probabilities, self.temperature)
-
-            # ノードの値を更新
-            current_node.policy = probabilities
-            current_node.value = float(value)
+        policy_batch, values = self.evaluator.evaluate_batch(
+            boards, legal_moves_batch, colors, self.temperature
+        )
+        for node, probabilities, value in zip(nodes, policy_batch, values):
+            node.policy = probabilities
+            node.value = float(value)
 
 
 if __name__ == "__main__":
