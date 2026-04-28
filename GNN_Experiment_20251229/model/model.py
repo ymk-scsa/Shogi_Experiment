@@ -209,7 +209,7 @@ def create_model(input_channels, num_actions, mode="30blocks"):
     """
     if mode == "modelA":
         # モデルA: CNN 10ブロック
-        config = ['CNX'] * 15 + ['CNT'] * 15
+        config = ['CRE'] * 10
 
     elif mode == "modelB":
         # モデルB: CNN 5ブロック + GCN 5ブロック (計10)

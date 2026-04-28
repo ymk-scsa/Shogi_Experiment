@@ -19,17 +19,19 @@ GNN_Experience_20251229/
 │   ├──model_README.md
 │   └──model_brock.py
 ├── search/
-│   └── mcts.py     # モンテカルロ木探索の実装
+│   ├──ads_ab.py
+│   ├──mc_rzf.py
+│   ├──mcts.py
+│   └──npls.py     NPLSの実装
+├── search/
 ├── setting/
 │   ├──diagnose_psv.py
 │   ├──Dockerfile
 │   └──requirements.txt
 ├── train/
-│   ├──immitation_train.py
-│   ├──ppo_per_train.py
-│   ├──parallelization_train.py
-│   ├──train_README.md
-│   └── train.py     
+│   ├──parallel_train.py　8モデル並列学習
+│   ├──reinforcement_train.py　自己対局による強化学習
+│   └──train_README.md    
 ├── weights/
 │   ├──checkpoint-modelA-003.pth
 │   ├──checkpoint-modelB-003.pth
