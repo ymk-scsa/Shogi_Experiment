@@ -13,12 +13,11 @@ from typing import Optional, Union
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from cshogi import Board, BLACK, move_to_usi
 from player.base_player import BasePlayer
+from player.evaluator import Evaluator, create_evaluator
 from player.npls_node import NPLSNode, NPLSNodeTree
-from model.model import PolicyValueResNetModel
-from shogi.feature import FEATURES_NUM, make_input_features, make_move_label
+from shogi.feature import make_move_label
 
 faulthandler.enable(all_threads=True)
 
@@ -30,6 +29,7 @@ DEFAULT_TIME_MARGIN = 1000
 DEFAULT_BYOYOMI_MARGIN = 100
 DEFAULT_PV_INTERVAL = 500
 DEFAULT_CONST_PLAYOUT = 1000
+DEFAULT_ACTIVATION_FUNCTION = "relu"
 
 
 def softmax_temperature_with_normalize(logits: np.ndarray, temperature: float) -> np.ndarray:
@@ -57,15 +57,15 @@ def total_value_to_mean_win_prob(total_value: float, depth: int) -> float:
 
 class NPLSPlayer(BasePlayer):
     name = "NPLS-ResNet"
-    DEFAULT_MODELFILE = "checkpoint/resnet_10/cache/checkpoint-006.pth"
+    DEFAULT_MODELFILE = "checkpoint/resnet_10/cache/checkpoint-007.pth"
     time_limit: Optional[int] = None
     minimum_time: int = 0
 
     def __init__(self, blocks: int = 10) -> None:
         super().__init__()
         self.modelfile: str = self.DEFAULT_MODELFILE
-        self.model: Optional[PolicyValueResNetModel] = None
-        self.features: Optional[np.ndarray] = None
+        self.eval_type: str = "resnet"
+        self.evaluator: Optional[Evaluator] = None
         self.nodes: list[NPLSNode] = []
         self.current_batch_index: int = 0
 
@@ -86,6 +86,7 @@ class NPLSPlayer(BasePlayer):
         self.pv_interval: int = DEFAULT_PV_INTERVAL
 
         self.blocks = blocks
+        self.activation_function: str = DEFAULT_ACTIVATION_FUNCTION
         self.debug = False
 
         self._best_value: float = 0.0
@@ -113,6 +114,11 @@ class NPLSPlayer(BasePlayer):
         print("option name time_margin type spin default " + str(DEFAULT_TIME_MARGIN) + " min 0 max 1000")
         print("option name byoyomi_margin type spin default " + str(DEFAULT_BYOYOMI_MARGIN) + " min 0 max 1000")
         print("option name pv_interval type spin default " + str(DEFAULT_PV_INTERVAL) + " min 0 max 10000")
+        print(
+            "option name activation_function type combo default relu"
+            + " var relu var leaky_relu var soft_sin var scaled_arc_tanh var quadratic var cube_root var squash_two"
+        )
+        print("option name eval_type type combo default resnet var resnet var nnue")
         print("option name debug type check default false")
 
     def setoption(self, args: list[str]) -> None:
@@ -132,48 +138,39 @@ class NPLSPlayer(BasePlayer):
             self.byoyomi_margin = int(args[3])
         elif args[1] == "pv_interval":
             self.pv_interval = int(args[3])
+        elif args[1] == "eval_type":
+            self.eval_type = args[3]
+        elif args[1] == "activation_function":
+            self.activation_function = args[3]
         elif args[1] == "debug":
             self.debug = args[3] == "true"
 
-    def load_model(self) -> None:
-        self.model = PolicyValueResNetModel(
-            input_features=FEATURES_NUM,
-            activation_function=F.relu,
+    def load_evaluator(self) -> None:
+        self.evaluator = create_evaluator(
+            eval_type=self.eval_type,
+            device=self.device,
+            modelfile=self.modelfile,
             blocks=self.blocks,
+            activation_function=self.activation_function,
         )
-        self.model.to(self.device)
-        checkpoint = torch.load(self.modelfile, map_location=self.device)
-        self.model.load_state_dict(checkpoint["model"])
-        self.model.eval()
-
-    def init_features(self) -> None:
-        # cshogi は numpy に直接書く。torch.Tensor.numpy() と共有しない（WSL/CUDA 不正終了の回避）。
-        self.features = np.zeros((self.batch_size, FEATURES_NUM, 9, 9), dtype=np.float32)
-
-    def _warmup_infer(self) -> None:
-        """CUDA 初期化のためのダミー推論（mcts_player と同様、モデルロード直後に1回だけ）。"""
-        if self.model is None or self.features is None:
-            return
-        with torch.no_grad():
-            x = torch.zeros((1, FEATURES_NUM, 9, 9), dtype=torch.float32, device=self.device)
-            self.model(x)
+        self.evaluator.warmup()
 
     def isready(self) -> None:
-        self._log_debug(f"isready: modelfile={self.modelfile} gpu_id={self.gpu_id} batchsize={self.batch_size}")
+        self._log_debug(
+            f"isready: eval_type={self.eval_type} modelfile={self.modelfile} gpu_id={self.gpu_id} batchsize={self.batch_size}"
+        )
         if self.gpu_id >= 0:
             self.device = torch.device(f"cuda:{self.gpu_id}")
         else:
             self.device = torch.device("cpu")
 
         try:
-            self.load_model()
+            self.load_evaluator()
         except Exception as e:
-            self._log_debug(f"load_model failed: {e}")
+            self._log_debug(f"load_evaluator failed: {e}")
             raise
         self.root_board.reset()
         self.tree.clear()
-        self.init_features()
-        self._warmup_infer()
         self._log_debug(f"isready: ok device={self.device}")
 
     def position(self, sfen: str, usi_moves: list[str]) -> None:
@@ -296,16 +293,20 @@ class NPLSPlayer(BasePlayer):
                 self.tree.push(node)
 
         while True:
-            self.current_batch_index = 0
             self.nodes = self.tree.pop_max(self.batch_size)
             if len(self.nodes) == 0:
                 break
-            for node in self.nodes:
-                self.make_input_features(node.board)
-            
-            policy_logits, value_logits = self.infer()
-            
-            for i, (policy_logit, value) in enumerate(zip(policy_logits, value_logits)):
+
+            if self.evaluator is None:
+                raise ValueError("evaluator is None")
+            boards = [node.board for node in self.nodes]
+            legal_batch = [list(node.board.legal_moves) for node in self.nodes]
+            colors = [node.board.turn for node in self.nodes]
+            policy_batch, value_logits = self.evaluator.evaluate_batch(
+                boards, legal_batch, colors, self.temperature
+            )
+
+            for i, (policy_prob, value) in enumerate(zip(policy_batch, value_logits)):
                 current_node = self.nodes[i]
                 val_side = float(np.asarray(value).reshape(-1)[0])
                 val_root = value_from_root_perspective(
@@ -314,10 +315,9 @@ class NPLSPlayer(BasePlayer):
 
                 # 合法手のみtreeに追加する
                 for j, move in enumerate(current_node.board.legal_moves):
-                    move_label = self.make_move_label(move, current_node.board.turn)
                     nb = current_node.board.copy()
                     nb.push(move)
-                    pol_f = float(policy_logit[move_label])
+                    pol_f = float(policy_prob[j]) if j < len(policy_prob) else 0.0
                     new_node = NPLSNode(
                         depth=current_node.depth + 1,
                         moves=current_node.moves + [move],
@@ -328,6 +328,7 @@ class NPLSPlayer(BasePlayer):
                         board=nb,
                         priority=0.0,
                     )
+                    # UW　囲碁のカタゴから（valueの最大値最小値の開きからプライオティをあげる）
                     new_node.priority = new_node.compute_priority()
                     self.tree.push(new_node)
                     
@@ -335,7 +336,7 @@ class NPLSPlayer(BasePlayer):
                         self._best_value = float(new_node.total_value)
                         self._best_node = new_node
             
-            self.playout_count += self.current_batch_index + 1
+            self.playout_count += len(self.nodes)
             
             if self.check_interruption():
                 return
@@ -345,24 +346,6 @@ class NPLSPlayer(BasePlayer):
                 if elapsed_ms > self.last_pv_print_time + self.pv_interval:
                     self.last_pv_print_time = elapsed_ms
                     self.get_bestmove_and_print_pv()
-
-    def make_input_features(self, board: Board) -> None:
-        # ノードが保持する Board をそのまま piece_planes に渡すと、cshogi 側で内部状態が壊れ
-        # 続く copy()/is_draw() でセグフォすることがあるため必ず複製してから特徴量化する。
-        bc = board.copy()
-        make_input_features(bc, self.features[self.current_batch_index])
-        self.current_batch_index += 1
-
-    def infer(self) -> tuple[np.ndarray, np.ndarray]:
-        with torch.no_grad():
-            n = self.current_batch_index
-            batch = np.ascontiguousarray(self.features[:n])
-            x = torch.as_tensor(batch, dtype=torch.float32, device=self.device)
-            policy_logits, value_logits = self.model(x)
-            pol = policy_logits.cpu().numpy()
-            # (B,1) の値は zip で (1,) 配列になり、累積・f-string で例外になるのを避ける
-            vals = torch.sigmoid(value_logits).cpu().numpy().astype(np.float64).reshape(-1)
-            return pol, vals
 
     def make_move_label(self, move: int, color: int) -> int:
         return make_move_label(move, color)
