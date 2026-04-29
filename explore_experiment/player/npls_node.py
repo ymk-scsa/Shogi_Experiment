@@ -16,6 +16,7 @@ class NPLSNode:
         moves: Optional[list[int]] = None,
         value: float = 0.0,
         total_value: float = 0.0,
+        value_variance: float = 0.0,
         policy: float = 0.0,
         total_policy: float = 1.0,
         board: Optional[cshogi.Board] = None,
@@ -25,13 +26,14 @@ class NPLSNode:
         self.moves: list[int] = moves if moves is not None else []
         self.value: float = value
         self.total_value: float = total_value
+        self.value_variance: float = value_variance
         self.policy: float = policy
         self.total_policy: float = total_policy
         self.board: cshogi.Board = board if board is not None else cshogi.Board()
         self.priority: float = priority
 
     def compute_priority(self) -> float:
-        return (3.0 / self.depth) + (self.policy * 2.0 + self.total_policy) + (self.total_value / self.depth)
+        return (3.0 / self.depth) + (self.policy * 2.0 + self.total_policy) + (self.total_value / self.depth) + (self.value_variance / self.depth)
 
 
 class NPLSNodeTree:
