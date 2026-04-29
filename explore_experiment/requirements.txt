@@ -1,0 +1,6 @@
+numpy
+cshogi
+typer
+typing_extensions
+pydantic
+# torch
