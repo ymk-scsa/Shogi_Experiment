@@ -8,7 +8,7 @@ GNN_Experience_20251229/
 │   └──run_modelD.bat
 ├── data/
 │   ├──Suisho10Mn_psv.bin
-│   └──buffer.py     # 自己対局の棋譜を保存するリプレイバッファ
+│   └──buffer.py     # 教師データの管理
 ├── game/
 │   └── board.py      # 将棋のルール、駒の動き、合法手生成
 ├── model/
@@ -17,13 +17,13 @@ GNN_Experience_20251229/
 │   ├──gnn_brock.py
 │   ├──transformer_brock.py
 │   ├──model_README.md
-│   └──model_brock.py
+│   └──others_brock.py
 ├── search/
 │   ├──ads_ab.py
 │   ├──mc_rzf.py
 │   ├──mcts.py
 │   └──npls.py     NPLSの実装
-├── search/
+├── selfplay_data/
 ├── setting/
 │   ├──diagnose_psv.py
 │   ├──Dockerfile
