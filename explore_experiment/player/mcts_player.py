@@ -10,6 +10,7 @@ if str(_ROOT) not in sys.path:
 import numpy as np
 import torch
 from typing import Optional, Union
+from concurrent.futures import Future, ThreadPoolExecutor
 
 from cshogi import (
     Board,
@@ -50,6 +51,10 @@ DEFAULT_CONST_PLAYOUT = 1000
 DEFAULT_BLOCKS = 20
 # デフォルト活性化関数
 DEFAULT_ACTIVATION_FUNCTION = "relu"
+# 非同期詰み探索
+DEFAULT_ASYNC_MATE_CHECK = False
+# 詰み探索深さ
+DEFAULT_MATE_DEPTH = 10
 # 勝ちを表す定数（数値に意味はない）
 VALUE_WIN = 10000
 # 負けを表す定数（数値に意味はない）
@@ -150,6 +155,11 @@ class MCTSPlayer(BasePlayer):
 
         self.blocks = DEFAULT_BLOCKS
         self.activation_function: str = DEFAULT_ACTIVATION_FUNCTION
+        self.async_mate_check: bool = DEFAULT_ASYNC_MATE_CHECK
+        self.mate_depth: int = DEFAULT_MATE_DEPTH
+        self._mate_executor = ThreadPoolExecutor(max_workers=1)
+        self._mate_future: Optional[Future[tuple[Optional[int], Optional[int]]]] = None
+        self._mate_result: Optional[tuple[int, int]] = None
 
         self.debug = False
 
@@ -174,6 +184,8 @@ class MCTSPlayer(BasePlayer):
             "option name activation_function type combo default relu"
             + " var relu var leaky_relu var soft_sin var scaled_arc_tanh var quadratic var cube_root var squash_two"
         )
+        print("option name async_mate_check type check default false")
+        print("option name mate_depth type spin default " + str(DEFAULT_MATE_DEPTH) + " min 1 max 20")
         print("option name eval_type type combo default resnet var resnet var nnue")
         print("option name debug type check default false")
 
@@ -202,8 +214,42 @@ class MCTSPlayer(BasePlayer):
             self.blocks = int(args[3])
         elif args[1] == "activation_function":
             self.activation_function = args[3]
+        elif args[1] == "async_mate_check":
+            self.async_mate_check = args[3] == "true"
+        elif args[1] == "mate_depth":
+            self.mate_depth = max(1, int(args[3]))
         elif args[1] == "debug":
             self.debug = args[3] == "true"
+
+    def _mate_search_worker(self, board: Board) -> tuple[Optional[int], Optional[int]]:
+        mate1 = None
+        if not board.is_check():
+            m1 = board.mate_move_in_1ply()
+            if m1:
+                mate1 = int(m1)
+        mate10 = None
+        m10 = board.mate_move(self.mate_depth)
+        if m10 != 0:
+            mate10 = int(m10)
+        return mate1, mate10
+
+    def _start_async_mate_search(self) -> None:
+        self._mate_result = None
+        self._mate_future = self._mate_executor.submit(self._mate_search_worker, self.root_board.copy())
+
+    def _poll_async_mate_search(self) -> Optional[int]:
+        if self._mate_result is not None:
+            # 優先度: 1手詰み > 10手詰み
+            mate1, mate10 = self._mate_result
+            return mate1 if mate1 is not None else mate10
+        if self._mate_future is None or not self._mate_future.done():
+            return None
+        try:
+            self._mate_result = self._mate_future.result()
+        except Exception:
+            self._mate_result = (None, None)
+        mate1, mate10 = self._mate_result
+        return mate1 if mate1 is not None else mate10
 
     def load_evaluator(self) -> None:
         self.evaluator = create_evaluator(
@@ -310,16 +356,19 @@ class MCTSPlayer(BasePlayer):
         current_node = self.tree.current_head
 
         # 詰みの場合
-        if current_node.value == VALUE_WIN:
-            matemove = self.root_board.mate_move(3)
-            if matemove != 0:
-                print("info score mate 3 pv {}".format(move_to_usi(matemove)), flush=True)
-                return move_to_usi(matemove), None
-        if not self.root_board.is_check():
-            matemove = self.root_board.mate_move_in_1ply()
-            if matemove:
-                print("info score mate 1 pv {}".format(move_to_usi(matemove)), flush=True)
-                return move_to_usi(matemove), None
+        if self.async_mate_check:
+            self._start_async_mate_search()
+        else:
+            if current_node.value == VALUE_WIN:
+                matemove = self.root_board.mate_move(self.mate_depth)
+                if matemove != 0:
+                    print(f"info score mate {self.mate_depth} pv {move_to_usi(matemove)}", flush=True)
+                    return move_to_usi(matemove), None
+            if not self.root_board.is_check():
+                matemove = self.root_board.mate_move_in_1ply()
+                if matemove:
+                    print("info score mate 1 pv {}".format(move_to_usi(matemove)), flush=True)
+                    return move_to_usi(matemove), None
 
         # プレイアウト数をクリア
         self.playout_count = 0
@@ -344,6 +393,16 @@ class MCTSPlayer(BasePlayer):
 
         # 探索
         self.search()
+
+        if self.async_mate_check:
+            matemove = self._poll_async_mate_search()
+            if matemove:
+                # すでに探索が進んでいても、詰み手を優先して返す
+                if not self.root_board.is_check() and self.root_board.mate_move_in_1ply() == matemove:
+                    print("info score mate 1 pv {}".format(move_to_usi(matemove)), flush=True)
+                else:
+                    print(f"info score mate {self.mate_depth} pv {move_to_usi(matemove)}", flush=True)
+                return move_to_usi(matemove), None
 
         # 最善手の取得とPVの表示
         bestmove, bestvalue, ponder_move = self.get_bestmove_and_print_pv()
@@ -386,6 +445,7 @@ class MCTSPlayer(BasePlayer):
 
     def quit(self) -> None:
         self.stop()
+        self._mate_executor.shutdown(wait=False, cancel_futures=True)
 
     def search(self) -> None:
         self.last_pv_print_time: float = 0
@@ -396,6 +456,11 @@ class MCTSPlayer(BasePlayer):
 
         # 探索回数が閾値を超える、または探索が打ち切られたらループを抜ける
         while True:
+            if self.async_mate_check:
+                matemove = self._poll_async_mate_search()
+                if matemove:
+                    self.halt = 0
+                    return
             trajectories_batch.clear()
             trajectories_batch_discarded.clear()
             self.current_batch_index = 0
