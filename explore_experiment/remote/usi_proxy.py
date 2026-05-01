@@ -26,8 +26,10 @@ def _reader(sock: socket.socket, out_queue: queue.Queue[str], stop_event: thread
 def connect_with_retry(host: str, port: int, retry_ms: int) -> socket.socket:
     while True:
         try:
+            print(f"info string proxy connecting to {host}:{port}", flush=True)
             s = socket.create_connection((host, port), timeout=5.0)
             s.settimeout(None)
+            print(f"info string proxy connected to {host}:{port}", flush=True)
             return s
         except OSError as e:
             print(f"info string proxy connect failed: {e}", flush=True)
@@ -42,6 +44,7 @@ def main() -> None:
     parser.add_argument("--retry-ms", type=int, default=1000)
     args = parser.parse_args()
 
+    print(f"info string proxy starting with host {args.host}, port {args.port}, retry_ms {args.retry_ms}", flush=True)
     sock = connect_with_retry(args.host, args.port, args.retry_ms)
     if args.token:
         _send_line(sock, f"AUTH {args.token}")
@@ -84,12 +87,17 @@ def main() -> None:
             if line == "quit":
                 break
 
-            # isready は readyok を受け取るまで待つと GUI 側の応答が安定する
-            if line == "isready":
+            # usi / isready は応答が来るまで待つと GUI 側の応答が安定する
+            wait_until: Optional[str] = None
+            if line == "usi":
+                wait_until = "usiok"
+            elif line == "isready":
+                wait_until = "readyok"
+            if wait_until is not None:
                 while True:
                     x = out_queue.get()
                     print(x, flush=True)
-                    if x == "readyok":
+                    if x == wait_until:
                         break
     finally:
         stop_event.set()
