@@ -156,7 +156,7 @@ class MCTSPlayer(BasePlayer):
         self.blocks = DEFAULT_BLOCKS
         self.activation_function: str = DEFAULT_ACTIVATION_FUNCTION
         self.async_mate_check: bool = DEFAULT_ASYNC_MATE_CHECK
-        self.mate_depth: int = DEFAULT_MATE_DEPTH
+        self.mate_depth: int = self._normalize_mate_depth(DEFAULT_MATE_DEPTH)
         self._mate_executor = ThreadPoolExecutor(max_workers=1)
         self._mate_future: Optional[Future[tuple[Optional[int], Optional[int]]]] = None
         self._mate_result: Optional[tuple[int, int]] = None
@@ -217,9 +217,16 @@ class MCTSPlayer(BasePlayer):
         elif args[1] == "async_mate_check":
             self.async_mate_check = args[3] == "true"
         elif args[1] == "mate_depth":
-            self.mate_depth = max(1, int(args[3]))
+            self.mate_depth = self._normalize_mate_depth(int(args[3]))
         elif args[1] == "debug":
             self.debug = args[3] == "true"
+
+    def _normalize_mate_depth(self, depth: int) -> int:
+        d = max(1, int(depth))
+        # cshogi の mate_move は奇数深さ前提
+        if d % 2 == 0:
+            d -= 1
+        return max(1, d)
 
     def _mate_search_worker(self, board: Board) -> tuple[Optional[int], Optional[int]]:
         mate1 = None
