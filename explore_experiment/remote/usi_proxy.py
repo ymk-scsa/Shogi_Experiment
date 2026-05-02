@@ -23,6 +23,22 @@ def _reader(sock: socket.socket, out_queue: queue.Queue[str], stop_event: thread
         out_queue.put(f"info string proxy reader error: {e}")
 
 
+def _printer(out_queue: queue.Queue[str], stop_event: threading.Event) -> None:
+    """stdin がブロックしていてもリモート行を即座に GUI へ渡す。"""
+    while True:
+        try:
+            line = out_queue.get(timeout=0.5)
+            print(line, flush=True)
+        except queue.Empty:
+            if stop_event.is_set():
+                while True:
+                    try:
+                        print(out_queue.get_nowait(), flush=True)
+                    except queue.Empty:
+                        break
+                break
+
+
 def connect_with_retry(host: str, port: int, retry_ms: int) -> socket.socket:
     while True:
         try:
@@ -52,21 +68,20 @@ def main() -> None:
 
     out_queue: queue.Queue[str] = queue.Queue()
     stop_event = threading.Event()
-    t = threading.Thread(target=_reader, args=(sock, out_queue, stop_event), daemon=True)
-    t.start()
+    reader_thread: Optional[threading.Thread] = None
 
-    def flush_remote_output(non_block: bool) -> None:
-        while True:
-            try:
-                line = out_queue.get_nowait() if non_block else out_queue.get(timeout=5.0)
-                print(line, flush=True)
-            except queue.Empty:
-                break
+    def start_reader(s: socket.socket) -> None:
+        nonlocal reader_thread
+        t = threading.Thread(target=_reader, args=(s, out_queue, stop_event), daemon=True)
+        t.start()
+        reader_thread = t
+
+    printer_thread = threading.Thread(target=_printer, args=(out_queue, stop_event), daemon=True)
+    printer_thread.start()
+    start_reader(sock)
 
     try:
         while True:
-            flush_remote_output(non_block=True)
-
             cmd = sys.stdin.readline()
             if cmd == "":
                 break
@@ -78,27 +93,21 @@ def main() -> None:
                 _send_line(sock, line)
             except OSError:
                 print("info string proxy reconnecting...", flush=True)
-                sock.close()
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+                if reader_thread is not None:
+                    reader_thread.join(timeout=2.0)
                 sock = connect_with_retry(args.host, args.port, args.retry_ms)
                 if args.token:
                     _send_line(sock, f"AUTH {args.token}")
+                start_reader(sock)
                 _send_line(sock, line)
 
             if line == "quit":
                 break
 
-            # usi / isready は応答が来るまで待つと GUI 側の応答が安定する
-            wait_until: Optional[str] = None
-            if line == "usi":
-                wait_until = "usiok"
-            elif line == "isready":
-                wait_until = "readyok"
-            if wait_until is not None:
-                while True:
-                    x = out_queue.get()
-                    print(x, flush=True)
-                    if x == wait_until:
-                        break
     finally:
         stop_event.set()
         try:
