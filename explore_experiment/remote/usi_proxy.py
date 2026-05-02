@@ -23,6 +23,16 @@ def _reader(sock: socket.socket, out_queue: queue.Queue[str], stop_event: thread
         out_queue.put(f"info string proxy reader error: {e}")
 
 
+# ★ 追加: 常時出力スレッド
+def _writer(out_queue: queue.Queue[str], stop_event: threading.Event) -> None:
+    while not stop_event.is_set():
+        try:
+            line = out_queue.get(timeout=0.1)
+            print(line, flush=True)
+        except queue.Empty:
+            continue
+
+
 def connect_with_retry(host: str, port: int, retry_ms: int) -> socket.socket:
     while True:
         try:
@@ -52,21 +62,17 @@ def main() -> None:
 
     out_queue: queue.Queue[str] = queue.Queue()
     stop_event = threading.Event()
-    t = threading.Thread(target=_reader, args=(sock, out_queue, stop_event), daemon=True)
-    t.start()
 
-    def flush_remote_output(non_block: bool) -> None:
-        while True:
-            try:
-                line = out_queue.get_nowait() if non_block else out_queue.get(timeout=5.0)
-                print(line, flush=True)
-            except queue.Empty:
-                break
+    # ★ readerスレッド
+    t_reader = threading.Thread(target=_reader, args=(sock, out_queue, stop_event), daemon=True)
+    t_reader.start()
+
+    # ★ 常時出力スレッド（これが修正の核心）
+    t_writer = threading.Thread(target=_writer, args=(out_queue, stop_event), daemon=True)
+    t_writer.start()
 
     try:
         while True:
-            flush_remote_output(non_block=True)
-
             cmd = sys.stdin.readline()
             if cmd == "":
                 break
@@ -87,18 +93,6 @@ def main() -> None:
             if line == "quit":
                 break
 
-            # usi / isready は応答が来るまで待つと GUI 側の応答が安定する
-            wait_until: Optional[str] = None
-            if line == "usi":
-                wait_until = "usiok"
-            elif line == "isready":
-                wait_until = "readyok"
-            if wait_until is not None:
-                while True:
-                    x = out_queue.get()
-                    print(x, flush=True)
-                    if x == wait_until:
-                        break
     finally:
         stop_event.set()
         try:

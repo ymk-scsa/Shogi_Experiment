@@ -112,3 +112,8 @@ python train.py --train-data data/Suisho10Mn_psv.bin --test-data data/Suisho10Mn
 普通のPC（CPU）で動かす場合
 python train.py --train-data data/Suisho10Mn_psv.bin --test-data data/Suisho10Mn_psv.bin --models modelD:1 --format psv --gpu -1
 ```
+
+@echo off
+
+@cd venv\Scripts\activate C:\Users\tkksn\Desktop\Shogi_Experience\Shogi_Experience\explore_experiment
+@python remote/usi_proxy.py --host 100.86.252.25 --port 49001 --token Nigohachi257
