@@ -15,6 +15,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from search.mcts import MCTSPlayer
 from search.npls import NPLSPlayer
+from search.mc_rzf import MCRZFPlayer
+from search.ads_ab import ADSABPlayer
 
 # USI コマンドの戻り値の型エイリアス (bestmove, ponder_move)
 UsiResponse = tuple
@@ -132,20 +134,34 @@ if __name__ == "__main__":
     parser.add_argument("--mode", type=str, default="30blocks", help="Model architecture mode (modelA, modelB, etc.)")
     parser.add_argument("--weights", type=str, default="weights/checkpoint.pth", help="Path to weights file")
     parser.add_argument("--name", type=str, default="GNN-Shogi", help="USI engine name")
-    parser.add_argument("--search_type", type=str, default="mcts", choices=["mcts", "npls"], help="Search algorithm type (mcts or npls)")
+    parser.add_argument("--search_type", type=str, default="mcts", choices=["mcts", "npls", "mc_rzf", "ads_ab"], help="Search algorithm type")
     args = parser.parse_args()
 
     # 引数に基づいて Player を起動
     if args.search_type == "npls":
         player = NPLSPlayer(
-            features_mode=0,         # 0: standard (46ch)
+            features_mode=0,
             blocks_config_mode=args.mode,
             name=args.name + " (NPLS)",
             modelfile=args.weights,
         )
+    elif args.search_type == "mc_rzf":
+        player = MCRZFPlayer(
+            features_mode=0,
+            blocks_config_mode=args.mode,
+            name=args.name + " (MC-RZF)",
+            modelfile=args.weights,
+        )
+    elif args.search_type == "ads_ab":
+        player = ADSABPlayer(
+            features_mode=0,
+            blocks_config_mode=args.mode,
+            name=args.name + " (ADS-AB)",
+            modelfile=args.weights,
+        )
     else:
         player = MCTSPlayer(
-            features_mode=0,         # 0: standard (46ch)
+            features_mode=0,
             blocks_config_mode=args.mode,
             name=args.name,
             modelfile=args.weights,
