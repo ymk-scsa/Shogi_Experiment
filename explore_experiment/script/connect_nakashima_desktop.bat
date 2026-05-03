@@ -1,3 +1,8 @@
 @echo off
+rem 1. バッチファイルがある場所の1つ上のフォルダ（プロジェクトルート）に移動
+cd /d "%~dp0.."
 
-@wsl -d Ubuntu-24.04 bash -c "cd /mnt/c/Users/kotet/Documents/program/Shogi_Experiment/explore_experiment && source /mnt/c/Users/kotet/Documents/program/Shogi_Experiment/.venv/bin/activate && python remote/usi_proxy.py --host 100.98.165.126 --port 49001 --token Nigohachi257"
+rem 2. Pythonの実行。システムのpyランチャーを使用して、Microsoft Storeを回避します
+py remote/usi_proxy.py --host 100.86.252.25 --port 49001 --token Nigohachi257
+
+

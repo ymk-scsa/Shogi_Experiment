@@ -12,7 +12,7 @@ from player.npls_player import NPLSPlayer
 
 if __name__ == "__main__":
     try:
-        NPLSPlayer().run()
+        MCTSPlayer().run()
     except KeyboardInterrupt:
         raise
     except Exception:
